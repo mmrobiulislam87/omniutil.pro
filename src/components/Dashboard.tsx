@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Search, Star } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { TOOLS } from "@/lib/tools";
+import { siteConfig } from "@/lib/site";
 import { cn } from "@/lib/cn";
 
 export function Dashboard() {
@@ -15,13 +16,11 @@ export function Dashboard() {
         <h1 className="mb-3 text-3xl font-extrabold tracking-tight text-white md:text-4xl">
           Smart Utilities.{" "}
           <span className="bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
-            Zero Server Costs.
+            100% Private.
           </span>
         </h1>
         <p className="max-w-2xl text-base leading-relaxed text-gray-400">
-          Your files and data never leave your device. Process everything
-          securely at lightning speed with next-generation client-side
-          architecture.
+          {siteConfig.description}
         </p>
 
         <button

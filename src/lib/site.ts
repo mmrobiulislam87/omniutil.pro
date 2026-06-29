@@ -4,7 +4,7 @@ export const siteConfig = {
   url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://omniutil.pro",
   description:
     "Free, ultra-fast, and 100% secure client-side tools. Your files and data never leave your device. Process images, data, and AI prompts instantly.",
-  tagline: "Smart Utilities. Zero Server Costs.",
+  tagline: "Smart Utilities. 100% Private.",
   keywords: [
     "client-side tools",
     "privacy tools",
