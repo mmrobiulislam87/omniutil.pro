@@ -1,5 +1,6 @@
 import {
   Database,
+  Eraser,
   FileText,
   ImageIcon,
   Sparkles,
@@ -21,6 +22,29 @@ export type Tool = {
 };
 
 export const TOOLS: Tool[] = [
+  {
+    id: "bg-remover",
+    name: "AI Background Remover",
+    dashboardTitle: "AI Background Remover",
+    description:
+      "Remove image backgrounds instantly and perfectly right inside your browser. 100% private, zero uploads, with custom color insertion.",
+    href: "/bg-remover",
+    icon: Eraser,
+    emoji: "🖼️",
+    badge: "AI / WASM",
+    category: "Media",
+    tags: [
+      "background remover",
+      "remove bg",
+      "transparent png",
+      "ecommerce",
+      "product photo",
+      "onnx",
+      "wasm",
+      "ai",
+      "privacy",
+    ],
+  },
   {
     id: "media-optimizer",
     name: "Media Optimizer",

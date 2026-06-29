@@ -7,13 +7,12 @@ import {
   Download,
   FileText,
   Image as ImageIcon,
+  Monitor,
+  Smartphone,
+  Sparkles,
   Table2,
   Trash2,
   X,
-} from "lucide-react";
-import {
-  Monitor,
-  Smartphone,
 } from "lucide-react";
 import { FileDropzone } from "@/components/FileDropzone";
 import { Button } from "@/components/ui/button";
@@ -48,7 +47,7 @@ export function FileToPdf() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
-  const [orientation, setOrientation] = useState<PdfOrientation>("portrait");
+  const [orientation, setOrientation] = useState<PdfOrientation>("auto");
 
   const totalSize = useMemo(
     () => items.reduce((sum, item) => sum + item.file.size, 0),
@@ -175,16 +174,24 @@ export function FileToPdf() {
         <div className="space-y-4">
           <section className="rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Page orientation
+              Layout
             </p>
             <div className="flex flex-wrap gap-2">
+              <OrientationButton
+                active={orientation === "auto"}
+                onClick={() => setOrientation("auto")}
+                disabled={generating}
+                icon={Sparkles}
+                label="Auto"
+                hint="Recommended — column widths & page size adjust so nothing is cut off"
+              />
               <OrientationButton
                 active={orientation === "portrait"}
                 onClick={() => setOrientation("portrait")}
                 disabled={generating}
                 icon={Smartphone}
                 label="Portrait"
-                hint="A4 vertical — best for tall images & documents"
+                hint="Fixed A4 vertical — images & text"
               />
               <OrientationButton
                 active={orientation === "landscape"}
@@ -192,7 +199,7 @@ export function FileToPdf() {
                 disabled={generating}
                 icon={Monitor}
                 label="Landscape"
-                hint="A4 horizontal — best for wide Excel tables"
+                hint="Fixed A4 horizontal — wide tables on standard pages"
               />
             </div>
           </section>
