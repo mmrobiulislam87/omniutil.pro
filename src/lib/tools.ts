@@ -51,7 +51,7 @@ export const TOOLS: Tool[] = [
     name: "Data Sanitizer",
     dashboardTitle: "No-Code Data Sanitizer",
     description:
-      "Clean, deduplicate, and validate massive CSV sheets instantly without compromising data privacy.",
+      "Clean, deduplicate, and validate CSV and Excel sheets instantly without compromising data privacy.",
     href: "/data-sanitizer",
     icon: Database,
     emoji: "📊",
