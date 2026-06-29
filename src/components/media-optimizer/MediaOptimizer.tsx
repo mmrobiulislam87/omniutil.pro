@@ -6,6 +6,7 @@ import { FileDropzone } from "@/components/FileDropzone";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { ToolErrorBanner } from "@/components/ui/ToolStateWrapper";
+import { BeforeAfterSlider } from "@/components/media-optimizer/BeforeAfterSlider";
 import { downloadBlob, formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import {
@@ -244,78 +245,83 @@ export function MediaOptimizer() {
             </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-4">
             {items.map((item) => (
               <div
                 key={item.id}
-                className="flex flex-col gap-4 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4 sm:flex-row sm:items-center"
+                className="rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4"
               >
-                {item.status === "done" && item.result ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- blob preview URL
-                  <img
-                    src={item.result.previewUrl}
-                    alt={item.name}
-                    className="h-20 w-20 shrink-0 rounded-lg border border-gray-700 object-cover"
-                  />
-                ) : (
-                  <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-lg bg-gray-800">
-                    {item.status === "processing" ? (
-                      <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
-                    ) : (
-                      <X className="h-6 w-6 text-red-400" />
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-gray-100">
+                      {item.name}
+                    </p>
+                    {item.status === "processing" && (
+                      <div className="mt-2 flex items-center gap-2 text-sm text-gray-500">
+                        <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                        Compressing…
+                      </div>
+                    )}
+                    {item.status === "error" && (
+                      <div className="mt-2">
+                        <ToolErrorBanner
+                          message={item.error ?? "Compression failed"}
+                          variant="inline"
+                        />
+                      </div>
+                    )}
+                    {item.status === "done" && item.result && (
+                      <p className="mt-1 text-sm text-gray-500">
+                        {formatBytes(item.result.originalSize)} →{" "}
+                        <span className="font-medium text-blue-400">
+                          {formatBytes(item.result.compressedSize)}
+                        </span>
+                        {item.result.savingsPercent > 0 && (
+                          <span className="ml-1 text-blue-400">
+                            (−{item.result.savingsPercent}%)
+                          </span>
+                        )}
+                      </p>
                     )}
                   </div>
-                )}
 
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-gray-100">
-                    {item.name}
-                  </p>
-                  {item.status === "processing" && (
-                    <p className="text-sm text-gray-500">Compressing…</p>
-                  )}
-                  {item.status === "error" && (
-                    <ToolErrorBanner
-                      message={item.error ?? "Compression failed"}
-                      variant="inline"
-                    />
-                  )}
-                  {item.status === "done" && item.result && (
-                    <p className="text-sm text-gray-500">
-                      {formatBytes(item.result.originalSize)} →{" "}
-                      <span className="font-medium text-blue-400">
-                        {formatBytes(item.result.compressedSize)}
-                      </span>
-                      {item.result.savingsPercent > 0 && (
-                        <span className="ml-1 text-blue-400">
-                          (−{item.result.savingsPercent}%)
-                        </span>
-                      )}
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex gap-2">
-                  {item.status === "done" && item.result && (
+                  <div className="flex shrink-0 gap-2">
+                    {item.status === "done" && item.result && (
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          downloadBlob(item.result!.file, item.result!.file.name)
+                        }
+                      >
+                        <Download className="h-4 w-4" />
+                        Download
+                      </Button>
+                    )}
                     <Button
-                      size="sm"
-                      onClick={() =>
-                        downloadBlob(item.result!.file, item.result!.file.name)
-                      }
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeItem(item.id)}
+                      aria-label="Remove"
                     >
-                      <Download className="h-4 w-4" />
-                      Download
+                      <X className="h-4 w-4" />
                     </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeItem(item.id)}
-                    aria-label="Remove"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  </div>
                 </div>
+
+                {item.status === "done" && item.result && (
+                  <div className="mt-4">
+                    <BeforeAfterSlider
+                      beforeSrc={item.result.originalPreviewUrl}
+                      afterSrc={item.result.previewUrl}
+                      alt={`${item.name} compression comparison`}
+                      beforeLabel="Original"
+                      afterLabel="Optimized"
+                    />
+                    <p className="mt-2 text-center text-xs text-gray-600">
+                      Drag the handle to compare original vs optimized
+                    </p>
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -3,7 +3,7 @@
 > Privacy-first, zero-server-cost utility platform for developers, creators, and professionals.
 > All processing happens 100% in the browser — your data never leaves your device.
 
-**Current version:** `v0.2.3`  
+**Current version:** `v0.2.4`  
 **Last updated:** June 29, 2026
 
 ---
@@ -70,11 +70,11 @@ P2  ░░░░░░░░░░░░░░░░░░░░   0%
 
 **Key files:** `ToolLayout.tsx`, `CommandPalette.tsx`, `ToolStateWrapper.tsx`, `FileDropzone.tsx`
 
-### 1.2 Tool Enhancements — ~35%
+### 1.2 Tool Enhancements — ~45%
 
 | Tool | Done | Remaining |
 |------|------|-----------|
-| **Media Optimizer** | AVIF, batch ZIP (`jszip`) | Before/after slider |
+| **Media Optimizer** | AVIF, batch ZIP (`jszip`), before/after slider | — |
 | **Prompt Architect** | CO-STAR, RISEN | RTCE & APE frameworks, template library |
 | **Data Sanitizer** | CSV, dedupe, validation | Excel (`.xlsx`), column mapping, anonymize |
 
@@ -216,6 +216,11 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 ## Release History
 
+### v0.2.4 — Before/After Slider (Jun 29, 2026)
+- Media Optimizer: interactive before/after comparison slider per result
+- `BeforeAfterSlider` component with pointer + keyboard support
+- `ProcessedImage` stores original preview URL for side-by-side compare
+
 ### v0.2.3 — Phase 1 Complete (Jun 29, 2026)
 - `ToolStateWrapper` — shared loading, empty, and error states across all tools
 - Canonical URL default aligned to `https://www.omniutil.pro`
@@ -254,7 +259,7 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 | ~~SEO (sitemap, OG)~~ ✅ | Before/after image slider |
 | ~~Vercel deploy + domain~~ ✅ | Excel support (Data Sanitizer) |
 | ~~Google Search Console submit~~ ✅ | i18n (EN + BN) |
-| **Before/after slider** ← **NEXT** | 5–10 new tools |
+| ~~Before/after slider~~ ✅ | Excel support (Data Sanitizer) ← **NEXT** |
 | ~~AVIF + ZIP~~ ✅ | Plugin registry refactor |
 
 | Low impact, low effort | Low impact, high effort |
@@ -269,8 +274,8 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ## Recommended Next Steps
 
 1. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
-2. **Phase 1.2** — Before/after image slider (Media Optimizer) ← **start here**
-3. **Phase 1.2** — Excel (`.xlsx`) support + column mapping (Data Sanitizer)
+2. **Phase 1.2** — Excel (`.xlsx`) support + column mapping (Data Sanitizer) ← **next**
+3. **Phase 1.2** — RTCE & APE frameworks (Prompt Architect)
 4. **GSC follow-up** — Request indexing; check Page indexing in 24–48h
 5. **Phase 2.1** — JSON Formatter, PDF Merger, QR Code Generator
 

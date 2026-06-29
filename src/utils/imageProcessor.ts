@@ -18,6 +18,7 @@ export type ImageCompressionOptions = {
 export type ProcessedImage = {
   file: File;
   previewUrl: string;
+  originalPreviewUrl: string;
   originalSize: number;
   compressedSize: number;
   savingsPercent: number;
@@ -104,6 +105,7 @@ async function compressViaCanvas(
           resolve({
             file: compressed,
             previewUrl: URL.createObjectURL(compressed),
+            originalPreviewUrl: URL.createObjectURL(file),
             originalSize: file.size,
             compressedSize: compressed.size,
             savingsPercent:
@@ -170,6 +172,7 @@ export async function compressImage(
   return {
     file: renamed,
     previewUrl: URL.createObjectURL(renamed),
+    originalPreviewUrl: URL.createObjectURL(file),
     originalSize: file.size,
     compressedSize: renamed.size,
     savingsPercent,
@@ -178,6 +181,7 @@ export async function compressImage(
 
 export function revokeProcessedImage(image: ProcessedImage) {
   URL.revokeObjectURL(image.previewUrl);
+  URL.revokeObjectURL(image.originalPreviewUrl);
 }
 
 export async function downloadImagesAsZip(
