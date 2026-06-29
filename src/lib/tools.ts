@@ -1,4 +1,5 @@
 import {
+  Braces,
   Database,
   Eraser,
   FileText,
@@ -22,6 +23,28 @@ export type Tool = {
 };
 
 export const TOOLS: Tool[] = [
+  {
+    id: "json-formatter",
+    name: "JSON Formatter",
+    dashboardTitle: "JSON Formatter & Validator",
+    description:
+      "Clean, format, minify, and validate JSON data instantly. Detect syntax errors with line numbers locally in your browser.",
+    href: "/json-formatter",
+    icon: Braces,
+    emoji: "📦",
+    badge: "Dev Utility",
+    category: "Dev",
+    tags: [
+      "json",
+      "formatter",
+      "validator",
+      "beautify",
+      "minify",
+      "syntax",
+      "developer",
+      "api",
+    ],
+  },
   {
     id: "bg-remover",
     name: "AI Background Remover",

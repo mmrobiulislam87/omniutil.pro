@@ -3,7 +3,7 @@
 > Privacy-first, zero-server-cost utility platform for developers, creators, and professionals.
 > All processing happens 100% in the browser — your data never leaves your device.
 
-**Current version:** `v0.3.0`  
+**Current version:** `v0.5.0`  
 **Last updated:** June 29, 2026
 
 ---
@@ -20,14 +20,14 @@ Build the most trusted client-side utility platform on the web — scalable to 1
 |-------|--------|--------|
 | **MVP** | Core architecture + 3 tools | ✅ Complete |
 | **Phase 1** | Polish & Launch | ✅ Complete |
-| **Phase 2** | Growth & new tools | 🚧 In Progress (~15%) |
+| **Phase 2** | Growth & new tools | 🚧 In Progress (~45%) |
 | **Phase 3** | Scale to 100 tools | 📋 Planned |
 | **Phase 4** | Ecosystem | 💡 Future |
 
 ```
 MVP ████████████████████ 100%
 P1  ████████████████████ 100%
-P2  ███░░░░░░░░░░░░░░░░░  15%
+P2  █████████░░░░░░░░░░░  45%
 ```
 
 ---
@@ -42,7 +42,7 @@ P2  ███░░░░░░░░░░░░░░░░░  15%
 - [x] LocalStorage state — favorites, recents
 - [x] Hydration-safe `useLocalStorage` hook
 
-### Tools (Live)
+### Tools (MVP launch)
 - [x] **Media Optimizer** — WASM compression, WebP/JPEG/PNG/AVIF, batch ZIP
 - [x] **Prompt Architect** — CO-STAR & RISEN, live preview, draft autosave
 - [x] **Data Sanitizer** — PapaParse chunked CSV, dedupe, email/phone validation
@@ -111,22 +111,24 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ### 1.4 Deployment & Launch — ✅ Complete
 
 - [x] GitHub repository connected — [github.com/mmrobiulislam87/omniutil.pro](https://github.com/mmrobiulislam87/omniutil.pro)
-- [x] Code pushed to `main` (`v0.2.1` SEO + `v0.2.2` launch commits)
+- [x] Code pushed to `main` (`v0.4.0` — AI Background Remover + smart PDF layout)
 - [x] Vercel production deploy — live at [www.omniutil.pro](https://www.omniutil.pro)
 - [x] Custom domain: `omniutil.pro` (Vercel DNS, SSL active)
 - [x] Public hero tagline — `Smart Utilities. 100% Private.`
 - [x] Google Search Console — property verified (`https://www.omniutil.pro/`)
-- [x] Sitemap submitted — `/sitemap.xml` processed (4 pages discovered)
+- [x] Sitemap submitted — `/sitemap.xml` processed (6 pages discovered)
 - [x] Canonical URL default — `https://www.omniutil.pro` (`site.ts`, `.env.example`)
 - [ ] Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` in Vercel env (mirror code default)
 - [ ] Production smoke test checklist (see below)
-- [ ] Request indexing for key URLs in GSC (home + 3 tools)
+- [ ] Request indexing for key URLs in GSC (home + 5 tools)
 
 **Pre-launch smoke test:**
-- [ ] Home, all 3 tool pages load
+- [ ] Home, all 5 tool pages load
 - [ ] Media Optimizer: compress + download + ZIP
 - [ ] Prompt Architect: build + copy prompt
 - [ ] Data Sanitizer: upload CSV + clean + export
+- [ ] File to PDF: image/Excel → PDF with Auto layout
+- [ ] AI Background Remover: upload → remove bg → download PNG
 - [ ] `Ctrl+K` palette works
 - [ ] `/sitemap.xml` and `/robots.txt` accessible
 - [ ] OG preview valid (share link on Twitter/LinkedIn)
@@ -138,18 +140,30 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 **Goal:** Increase traffic, retention, and tool count  
 **Timeline:** 2–4 weeks
 
+### Live tools (6 total)
+
+| Tool | Route | Version |
+|------|-------|---------|
+| JSON Formatter & Validator | `/json-formatter` | v0.5.0 |
+| AI Background Remover | `/bg-remover` | v0.4.0 |
+| Media Optimizer | `/media-optimizer` | v0.2.4+ |
+| Prompt Architect | `/prompt-architect` | v0.2.7+ |
+| Data Sanitizer | `/data-sanitizer` | v0.2.8+ |
+| File to PDF | `/file-to-pdf` | v0.3.1+ |
+
 ### 2.1 New Tools (Priority Queue)
 
 | # | Tool | Category | Stack | Status |
 |---|------|----------|-------|--------|
 | 4 | **File to PDF** (Unicode / বাংলা) | Document | `pdf-lib` + Noto fonts | ✅ Live |
-| 5 | JSON Formatter & Validator | Dev | Pure JS | 📋 |
-| 6 | PDF Merger / Splitter | Document | `pdf-lib` | 📋 |
-| 7 | QR Code Generator | Utility | `qrcode` | 📋 |
-| 8 | Color Palette Generator | Design | Canvas API | 📋 |
-| 9 | Markdown → HTML | Dev | `marked` | 📋 |
-| 10 | Password Generator | Security | Web Crypto API | 📋 |
-| 11 | Base64 Encode/Decode | Dev | Native APIs | 📋 |
+| 5 | **AI Background Remover** | Media | `@imgly/background-removal` + ONNX/WASM | ✅ Live |
+| 6 | JSON Formatter & Validator | Dev | Pure JS | ✅ Live |
+| 7 | PDF Merger / Splitter | Document | `pdf-lib` | 📋 |
+| 8 | QR Code Generator | Utility | `qrcode` | 📋 |
+| 9 | Color Palette Generator | Design | Canvas API | 📋 |
+| 10 | Markdown → HTML | Dev | `marked` | 📋 |
+| 11 | Password Generator | Security | Web Crypto API | 📋 |
+| 12 | Base64 Encode/Decode | Dev | Native APIs | 📋 |
 
 **Adding a new tool:**
 1. Add entry to `src/lib/tools.ts` (auto-added to sitemap)
@@ -159,9 +173,10 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 ### 2.2 PWA & Performance
 - [x] Web manifest + app icons (Phase 1.3)
+- [x] Per-tool code splitting — AI Background Remover lazy-loads ONNX model on demand
 - [ ] Service Worker — offline dashboard shell
 - [ ] Lighthouse score 95+ (LCP, CLS, INP)
-- [ ] Per-tool code splitting / lazy loading
+- [ ] Per-tool code splitting audit (remaining tools)
 - [ ] Bundle size audit
 
 ### 2.3 Privacy-First Analytics
@@ -216,6 +231,25 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ---
 
 ## Release History
+
+### v0.5.0 — JSON Formatter & Validator (Jun 29, 2026)
+- New tool: **JSON Formatter & Validator** (`/json-formatter`)
+- Pure `JSON.parse` / `JSON.stringify` — zero dependencies, instant client-side
+- 2-space, 4-space, and minified output modes
+- Syntax errors with line + column hints; one-click copy
+
+### v0.4.0 — AI Background Remover + Smart PDF Layout (Jun 29, 2026)
+- New tool: **AI Background Remover** (`/bg-remover`)
+- On-device background removal via `@imgly/background-removal` (ONNX Runtime Web + WASM)
+- Progress bar for model download + inference; transparent/white/black/custom background + HD PNG export
+- Checkerboard preview for transparent backgrounds (`.checkboard-bg`)
+- File to PDF: **Auto layout** — content-aware column widths, text wrapping, dynamic page width (no truncation)
+- File to PDF: Portrait / Landscape / Auto orientation toggle
+- Deployed to production — [www.omniutil.pro/bg-remover](https://www.omniutil.pro/bg-remover)
+
+### v0.3.1 — File to PDF Orientation (Jun 29, 2026)
+- Portrait and Landscape modes for spreadsheet/image PDF export
+- Horizontal + vertical pagination for wide Excel tables
 
 ### v0.3.0 — File to PDF (Jun 29, 2026)
 - New tool: Universal File to PDF (`/file-to-pdf`)
@@ -283,12 +317,13 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 | High impact, low effort | High impact, high effort |
 |-------------------------|---------------------------|
-| ~~SEO (sitemap, OG)~~ ✅ | Before/after image slider |
-| ~~Vercel deploy + domain~~ ✅ | Excel support (Data Sanitizer) |
-| ~~Google Search Console submit~~ ✅ | i18n (EN + BN) |
+| ~~SEO (sitemap, OG)~~ ✅ | ~~AI Background Remover~~ ✅ |
+| ~~Vercel deploy + domain~~ ✅ | Before/after image slider |
+| ~~Google Search Console submit~~ ✅ | Excel support (Data Sanitizer) |
 | ~~Excel support~~ ✅ | i18n (EN + BN) |
 | ~~Data anonymization~~ ✅ | Plugin registry refactor |
 | ~~AVIF + ZIP~~ ✅ | Plugin registry refactor |
+| ~~File to PDF~~ ✅ | Smart PDF auto-layout |
 
 | Low impact, low effort | Low impact, high effort |
 |------------------------|-------------------------|
@@ -301,10 +336,11 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 ## Recommended Next Steps
 
-1. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
-2. **Phase 2.1** — JSON Formatter ← **next**
-3. **Phase 2.1** — QR Code Generator, PDF Merger
-3. **GSC follow-up** — Request indexing; check Page indexing
+1. **GSC follow-up** — Resubmit sitemap (now 7 URLs); request indexing for new tools
+2. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
+3. **Phase 2.1** — QR Code Generator ← **next** (high traffic, tiny bundle)
+4. **Phase 2.1** — PDF Merger / Splitter (reuses `pdf-lib` from File to PDF)
+5. **Production smoke test** — Run checklist for all 6 live tools
 
 ---
 
@@ -318,7 +354,9 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 | Font | Inter (`next/font`) |
 | SEO | `sitemap.ts`, `robots.ts`, `manifest.ts`, `next/og` |
 | Image compression | `browser-image-compression` + Canvas (AVIF) |
-| CSV parsing | `papaparse` |
+| Background removal | `@imgly/background-removal` (ONNX Runtime Web) |
+| PDF generation | `pdf-lib` + `@pdf-lib/fontkit` + Noto fonts (CDN) |
+| CSV / Excel parsing | `papaparse` + `xlsx` (SheetJS) |
 | ZIP export | `jszip` |
 | Forms | `react-hook-form` |
 | Icons | `lucide-react` |
