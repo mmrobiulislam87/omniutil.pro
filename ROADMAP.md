@@ -19,7 +19,7 @@ Build the most trusted client-side utility platform on the web — scalable to 1
 | Phase | Focus | Status |
 |-------|--------|--------|
 | **MVP** | Core architecture + 3 tools | ✅ Complete |
-| **Phase 1** | Polish & Launch | 🚧 In Progress (~90%) |
+| **Phase 1** | Polish & Launch | 🚧 In Progress (~95%) |
 | **Phase 2** | Growth & new tools | 📋 Planned |
 | **Phase 3** | Scale to 100 tools | 📋 Planned |
 | **Phase 4** | Ecosystem | 💡 Future |
@@ -106,11 +106,13 @@ P2  ░░░░░░░░░░░░░░░░░░░░   0%
 NEXT_PUBLIC_SITE_URL=https://omniutil.pro
 ```
 
-### 1.4 Deployment — 🔜 Next (only blocker to launch)
+### 1.4 Deployment — 🚧 In Progress
 
+- [x] GitHub repository connected — [github.com/mmrobiulislam87/omniutil.pro](https://github.com/mmrobiulislam87/omniutil.pro)
+- [x] Code pushed to `main` (`v0.2.1` launch commit)
 - [ ] Vercel production deploy
 - [ ] Custom domain: `omniutil.pro`
-- [ ] Set `NEXT_PUBLIC_SITE_URL` in Vercel env
+- [ ] Set `NEXT_PUBLIC_SITE_URL=https://omniutil.pro` in Vercel env
 - [ ] Production smoke test checklist (see below)
 - [ ] Submit sitemap to Google Search Console
 
@@ -288,8 +290,9 @@ NEXT_PUBLIC_SITE_URL=https://omniutil.pro
 
 ## Links
 
+- **GitHub:** https://github.com/mmrobiulislam87/omniutil.pro
 - **Local dev:** `npm run dev` → http://localhost:3000
-- **Production:** _Pending deploy — omniutil.pro_
+- **Production:** _Deploy via Vercel — omniutil.pro_
 - **Sitemap (post-deploy):** https://omniutil.pro/sitemap.xml
 - **Robots (post-deploy):** https://omniutil.pro/robots.txt
 
