@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { Download, Loader2, Sparkles } from "lucide-react";
+import { Download, Sparkles } from "lucide-react";
 import { FileDropzone } from "@/components/FileDropzone";
 import { Button } from "@/components/ui/button";
+import { ToolStateWrapper } from "@/components/ui/ToolStateWrapper";
 import { downloadText, formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import {
@@ -95,34 +96,26 @@ export function DataSanitizer() {
 
   return (
     <div className="space-y-6">
-      {!rawRows.length && !parsing && (
-        <FileDropzone
-          accept=".csv,text/csv"
-          onFiles={handleFile}
-          label="Drop a CSV file here or click to browse"
-          hint="Large files supported via chunked in-browser parsing"
+      {parsing ? (
+        <ToolStateWrapper
+          isLoading
+          loadingMessage={
+            parseProgress > 0
+              ? `Parsing CSV locally… (${parseProgress.toLocaleString()} rows)`
+              : "Parsing CSV locally…"
+          }
         />
-      )}
-
-      {parsing && (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-700 py-16">
-          <Loader2 className="mb-3 h-8 w-8 animate-spin text-blue-400" />
-          <p className="text-sm font-medium text-gray-300">Parsing CSV…</p>
-          {parseProgress > 0 && (
-            <p className="mt-1 text-xs text-gray-500">
-              {parseProgress.toLocaleString()} rows loaded
-            </p>
-          )}
+      ) : !rawRows.length ? (
+        <div className="space-y-4">
+          {error && <ToolStateWrapper error={error} />}
+          <FileDropzone
+            accept=".csv,text/csv"
+            onFiles={handleFile}
+            label="Drop a CSV file here or click to browse"
+            hint="Large files supported via chunked in-browser parsing"
+          />
         </div>
-      )}
-
-      {error && (
-        <div className="rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-3 text-sm text-red-400">
-          {error}
-        </div>
-      )}
-
-      {rawRows.length > 0 && (
+      ) : (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#0B0F19]/50 px-5 py-4">
             <div>
@@ -254,10 +247,11 @@ export function DataSanitizer() {
                   </Button>
                 </div>
               ) : (
-                <p className="text-sm text-gray-500">
-                  Configure options and click &ldquo;Clean data&rdquo; to see
-                  stats and export.
-                </p>
+                <ToolStateWrapper
+                  isEmpty
+                  emptyIcon="✨"
+                  emptyMessage='Configure options and click "Clean data" to see stats and export.'
+                />
               )}
             </section>
           </div>

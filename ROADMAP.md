@@ -3,7 +3,7 @@
 > Privacy-first, zero-server-cost utility platform for developers, creators, and professionals.
 > All processing happens 100% in the browser — your data never leaves your device.
 
-**Current version:** `v0.2.1`  
+**Current version:** `v0.2.3`  
 **Last updated:** June 29, 2026
 
 ---
@@ -19,14 +19,14 @@ Build the most trusted client-side utility platform on the web — scalable to 1
 | Phase | Focus | Status |
 |-------|--------|--------|
 | **MVP** | Core architecture + 3 tools | ✅ Complete |
-| **Phase 1** | Polish & Launch | 🚧 In Progress (~95%) |
+| **Phase 1** | Polish & Launch | ✅ Complete |
 | **Phase 2** | Growth & new tools | 📋 Planned |
 | **Phase 3** | Scale to 100 tools | 📋 Planned |
 | **Phase 4** | Ecosystem | 💡 Future |
 
 ```
 MVP ████████████████████ 100%
-P1  ██████████████████░░  90%  ← deploy next
+P1  ████████████████████ 100%
 P2  ░░░░░░░░░░░░░░░░░░░░   0%
 ```
 
@@ -48,27 +48,27 @@ P2  ░░░░░░░░░░░░░░░░░░░░   0%
 - [x] **Data Sanitizer** — PapaParse chunked CSV, dedupe, email/phone validation
 
 ### Dashboard
-- [x] Hero section + privacy messaging
+- [x] Hero section + privacy messaging (`Smart Utilities. 100% Private.`)
 - [x] Tool card grid with badges, emoji, bookmark (★)
 - [x] `Ctrl+K` / `Cmd+K` command palette
 
 ---
 
-## 🚧 Phase 1 — Polish & Launch (In Progress)
+## ✅ Phase 1 — Polish & Launch (Complete)
 
 **Goal:** Production-ready, professional finish, live on `omniutil.pro`  
 **Timeline:** 1–2 weeks
 
-### 1.1 UI/UX Unification — ~90%
+### 1.1 UI/UX Unification — ✅ Complete
 
 - [x] Shared `ToolLayout` component
 - [x] Blue/dark theme on all tool pages
 - [x] `Ctrl+K` / `Cmd+K` command palette
 - [x] Remove `ToolPlaceholder`
 - [x] Hydration fixes (`useLocalStorage`, Inter font)
-- [ ] Consistent loading, empty, and error states across all tools
+- [x] Consistent loading, empty, and error states (`ToolStateWrapper.tsx`)
 
-**Key files:** `ToolLayout.tsx`, `CommandPalette.tsx`, `LayoutShell.tsx`, `FileDropzone.tsx`
+**Key files:** `ToolLayout.tsx`, `CommandPalette.tsx`, `ToolStateWrapper.tsx`, `FileDropzone.tsx`
 
 ### 1.2 Tool Enhancements — ~35%
 
@@ -89,8 +89,9 @@ P2  ░░░░░░░░░░░░░░░░░░░░   0%
 - [x] Dynamic OG image (`opengraph-image.tsx`, 1200×630)
 - [x] App icons (`icon.tsx`, `apple-icon.tsx`)
 - [x] Central config (`src/lib/site.ts`, `.env.example`)
+- [x] Google Search Console verification meta tag (`layout.tsx`)
 
-**Live SEO routes (after build):**
+**Live SEO routes:**
 
 | Route | Purpose |
 |-------|---------|
@@ -101,20 +102,25 @@ P2  ░░░░░░░░░░░░░░░░░░░░   0%
 | `/icon` | Favicon |
 | `/apple-icon` | iOS home screen |
 
-**Env var for production:**
+**Env var for production (Vercel):**
 ```bash
-NEXT_PUBLIC_SITE_URL=https://omniutil.pro
+NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ```
+> **Note:** Default canonical URL is `https://www.omniutil.pro`. Set the same value in Vercel Environment Variables for production builds.
 
-### 1.4 Deployment — 🚧 In Progress
+### 1.4 Deployment & Launch — ✅ Complete
 
 - [x] GitHub repository connected — [github.com/mmrobiulislam87/omniutil.pro](https://github.com/mmrobiulislam87/omniutil.pro)
-- [x] Code pushed to `main` (`v0.2.1` launch commit)
-- [ ] Vercel production deploy
-- [ ] Custom domain: `omniutil.pro`
-- [ ] Set `NEXT_PUBLIC_SITE_URL=https://omniutil.pro` in Vercel env
+- [x] Code pushed to `main` (`v0.2.1` SEO + `v0.2.2` launch commits)
+- [x] Vercel production deploy — live at [www.omniutil.pro](https://www.omniutil.pro)
+- [x] Custom domain: `omniutil.pro` (Vercel DNS, SSL active)
+- [x] Public hero tagline — `Smart Utilities. 100% Private.`
+- [x] Google Search Console — property verified (`https://www.omniutil.pro/`)
+- [x] Sitemap submitted — `/sitemap.xml` processed (4 pages discovered)
+- [x] Canonical URL default — `https://www.omniutil.pro` (`site.ts`, `.env.example`)
+- [ ] Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` in Vercel env (mirror code default)
 - [ ] Production smoke test checklist (see below)
-- [ ] Submit sitemap to Google Search Console
+- [ ] Request indexing for key URLs in GSC (home + 3 tools)
 
 **Pre-launch smoke test:**
 - [ ] Home, all 3 tool pages load
@@ -210,6 +216,17 @@ NEXT_PUBLIC_SITE_URL=https://omniutil.pro
 
 ## Release History
 
+### v0.2.3 — Phase 1 Complete (Jun 29, 2026)
+- `ToolStateWrapper` — shared loading, empty, and error states across all tools
+- Canonical URL default aligned to `https://www.omniutil.pro`
+- Phase 1 closed at 100%
+
+### v0.2.2 — Launch (Jun 29, 2026)
+- Live on Vercel — [www.omniutil.pro](https://www.omniutil.pro)
+- Public hero tagline: `Smart Utilities. 100% Private.`
+- Google Search Console verification + sitemap submitted (4 pages)
+- Custom domain `omniutil.pro` with SSL
+
 ### v0.2.1 — SEO & Discoverability (Jun 29, 2026)
 - Dynamic sitemap + robots.txt from tool registry
 - Open Graph, Twitter Cards, JSON-LD structured data
@@ -234,10 +251,10 @@ NEXT_PUBLIC_SITE_URL=https://omniutil.pro
 
 | High impact, low effort | High impact, high effort |
 |-------------------------|---------------------------|
-| ~~SEO (sitemap, OG)~~ ✅ | Excel support (Data Sanitizer) |
-| **Vercel deploy + domain** ← **NOW** | 5–10 new tools |
-| Google Search Console submit | i18n (EN + BN) |
-| ~~Favicon + manifest~~ ✅ | Before/after image slider |
+| ~~SEO (sitemap, OG)~~ ✅ | Before/after image slider |
+| ~~Vercel deploy + domain~~ ✅ | Excel support (Data Sanitizer) |
+| ~~Google Search Console submit~~ ✅ | i18n (EN + BN) |
+| **Before/after slider** ← **NEXT** | 5–10 new tools |
 | ~~AVIF + ZIP~~ ✅ | Plugin registry refactor |
 
 | Low impact, low effort | Low impact, high effort |
@@ -245,16 +262,17 @@ NEXT_PUBLIC_SITE_URL=https://omniutil.pro
 | Analytics (Plausible) | Browser extension |
 | Per-tool OG images | CLI tool |
 | Changelog page | Native mobile app |
-| Unified loading/empty states | |
+| ~~Unified loading/empty states~~ ✅ | |
 
 ---
 
 ## Recommended Next Steps
 
-1. **Phase 1.4** — Vercel deploy + `omniutil.pro` domain + Search Console
-2. **Phase 1.2** — Before/after slider, RTCE/APE, Excel support
-3. **Phase 1.1** — Unified loading, empty, and error states
-4. **Phase 2.1** — JSON Formatter, PDF Merger, QR Code Generator
+1. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
+2. **Phase 1.2** — Before/after image slider (Media Optimizer) ← **start here**
+3. **Phase 1.2** — Excel (`.xlsx`) support + column mapping (Data Sanitizer)
+4. **GSC follow-up** — Request indexing; check Page indexing in 24–48h
+5. **Phase 2.1** — JSON Formatter, PDF Merger, QR Code Generator
 
 ---
 
@@ -273,7 +291,7 @@ NEXT_PUBLIC_SITE_URL=https://omniutil.pro
 | Forms | `react-hook-form` |
 | Icons | `lucide-react` |
 | State | React Context + LocalStorage |
-| Hosting (planned) | Vercel (Edge) |
+| Hosting | Vercel (Edge) — production live |
 
 ---
 
@@ -292,9 +310,10 @@ NEXT_PUBLIC_SITE_URL=https://omniutil.pro
 
 - **GitHub:** https://github.com/mmrobiulislam87/omniutil.pro
 - **Local dev:** `npm run dev` → http://localhost:3000
-- **Production:** _Deploy via Vercel — omniutil.pro_
-- **Sitemap (post-deploy):** https://omniutil.pro/sitemap.xml
-- **Robots (post-deploy):** https://omniutil.pro/robots.txt
+- **Production:** https://www.omniutil.pro
+- **Sitemap:** https://www.omniutil.pro/sitemap.xml
+- **Robots:** https://www.omniutil.pro/robots.txt
+- **Search Console:** https://search.google.com/search-console (property: `https://www.omniutil.pro/`)
 
 ---
 

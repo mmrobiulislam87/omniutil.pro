@@ -1,7 +1,7 @@
 export const siteConfig = {
   name: "OmniUtil.pro",
   shortName: "OmniUtil",
-  url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://omniutil.pro",
+  url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.omniutil.pro",
   description:
     "Free, ultra-fast, and 100% secure client-side tools. Your files and data never leave your device. Process images, data, and AI prompts instantly.",
   tagline: "Smart Utilities. 100% Private.",

@@ -5,6 +5,7 @@ import { Download, Loader2, Trash2, X, FileArchive } from "lucide-react";
 import { FileDropzone } from "@/components/FileDropzone";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { ToolErrorBanner } from "@/components/ui/ToolStateWrapper";
 import { downloadBlob, formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import {
@@ -274,7 +275,10 @@ export function MediaOptimizer() {
                     <p className="text-sm text-gray-500">Compressing…</p>
                   )}
                   {item.status === "error" && (
-                    <p className="text-sm text-red-400">{item.error}</p>
+                    <ToolErrorBanner
+                      message={item.error ?? "Compression failed"}
+                      variant="inline"
+                    />
                   )}
                   {item.status === "done" && item.result && (
                     <p className="text-sm text-gray-500">

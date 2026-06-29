@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
-import { Check, Copy, RotateCcw, Sparkles } from "lucide-react";
+import { Check, Copy, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ToolStateWrapper } from "@/components/ui/ToolStateWrapper";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { cn } from "@/lib/cn";
 import {
@@ -114,17 +115,10 @@ export function PromptArchitect() {
 
   if (!hydrated) {
     return (
-      <div className="animate-pulse space-y-6">
-        <div className="h-10 w-64 rounded-lg bg-gray-800" />
-        <div className="grid gap-8 lg:grid-cols-2">
-          <div className="space-y-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-24 rounded-lg bg-gray-800" />
-            ))}
-          </div>
-          <div className="h-96 rounded-xl bg-gray-800" />
-        </div>
-      </div>
+      <ToolStateWrapper
+        isLoading
+        loadingMessage="Restoring your draft locally…"
+      />
     );
   }
 
@@ -243,15 +237,12 @@ export function PromptArchitect() {
                   {masterPrompt}
                 </pre>
               ) : (
-                <div className="flex h-full min-h-[280px] flex-col items-center justify-center text-center">
-                  <Sparkles className="mb-3 h-8 w-8 text-gray-600" />
-                  <p className="text-sm font-medium text-gray-500">
-                    Your prompt will appear here
-                  </p>
-                  <p className="mt-1 text-xs text-gray-600">
-                    Start filling in the fields on the left
-                  </p>
-                </div>
+                <ToolStateWrapper
+                  isEmpty
+                  emptyIcon="✨"
+                  emptyMessage="Your prompt will appear here. Start filling in the fields on the left."
+                  className="min-h-[280px] border-0"
+                />
               )}
             </div>
           </div>
