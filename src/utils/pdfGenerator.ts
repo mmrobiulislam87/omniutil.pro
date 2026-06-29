@@ -7,16 +7,28 @@ import {
 } from "@/utils/dataCleaner";
 
 export type PdfFileKind = "image" | "spreadsheet" | "text";
+export type PdfOrientation = "portrait" | "landscape";
 
 export type ClassifiedFile = {
   file: File;
   kind: PdfFileKind;
 };
 
-const A4_WIDTH = 595.28;
-const A4_HEIGHT = 841.89;
-const MARGIN = 44;
-const CONTENT_WIDTH = A4_WIDTH - MARGIN * 2;
+export type PdfGenerateOptions = {
+  orientation?: PdfOrientation;
+};
+
+type PageLayout = {
+  width: number;
+  height: number;
+  margin: number;
+  contentWidth: number;
+  contentHeight: number;
+};
+
+const A4_SHORT = 595.28;
+const A4_LONG = 841.89;
+const MARGIN = 40;
 
 const FONT_LATIN_URL =
   "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
@@ -25,6 +37,7 @@ const FONT_BENGALI_URL =
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif|bmp)$/i;
 const TEXT_EXTENSIONS = /\.(txt|md|json|xml|html|log)$/i;
+const YIELD_EVERY_PAGES = 8;
 
 type FontSet = {
   latin: PDFFont;
@@ -51,6 +64,18 @@ export function classifyPdfFiles(files: File[]): ClassifiedFile[] {
       return kind ? { file, kind } : null;
     })
     .filter((item): item is ClassifiedFile => item !== null);
+}
+
+function getPageLayout(orientation: PdfOrientation): PageLayout {
+  const width = orientation === "landscape" ? A4_LONG : A4_SHORT;
+  const height = orientation === "landscape" ? A4_SHORT : A4_LONG;
+  return {
+    width,
+    height,
+    margin: MARGIN,
+    contentWidth: width - MARGIN * 2,
+    contentHeight: height - MARGIN * 2,
+  };
 }
 
 async function loadFontBytes(): Promise<{ latin: ArrayBuffer; bengali: ArrayBuffer }> {
@@ -114,6 +139,27 @@ function drawMixedText(
   }
 }
 
+function truncateToWidth(
+  text: string,
+  maxWidth: number,
+  fontSize: number,
+  fonts: FontSet,
+): string {
+  const value = text.trim();
+  if (!value) return "";
+  if (measureMixedText(value, fontSize, fonts) <= maxWidth) return value;
+
+  const ellipsis = "…";
+  let trimmed = value;
+  while (
+    trimmed.length > 0 &&
+    measureMixedText(trimmed + ellipsis, fontSize, fonts) > maxWidth
+  ) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return trimmed ? trimmed + ellipsis : ellipsis;
+}
+
 function wrapText(text: string, maxWidth: number, fontSize: number, fonts: FontSet): string[] {
   const paragraphs = text.replace(/\r\n/g, "\n").split("\n");
   const lines: string[] = [];
@@ -143,28 +189,12 @@ function wrapText(text: string, maxWidth: number, fontSize: number, fonts: FontS
   return lines.length > 0 ? lines : [""];
 }
 
-function drawWrappedText(
-  page: PDFPage,
-  text: string,
-  x: number,
-  startY: number,
-  maxWidth: number,
-  fontSize: number,
-  fonts: FontSet,
-  maxLines?: number,
-): { y: number; truncated: boolean } {
-  const lines = wrapText(text, maxWidth, fontSize, fonts);
-  const usable = maxLines ? lines.slice(0, maxLines) : lines;
-  let y = startY;
-  const lineHeight = fontSize * 1.45;
-
-  for (const line of usable) {
-    if (y < MARGIN) return { y, truncated: true };
-    if (line) drawMixedText(page, line, x, y, fontSize, fonts);
-    y -= lineHeight;
+async function yieldToBrowser(pagesSinceYield: number): Promise<boolean> {
+  if (pagesSinceYield >= YIELD_EVERY_PAGES) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    return true;
   }
-
-  return { y, truncated: maxLines ? lines.length > maxLines : false };
+  return false;
 }
 
 function loadImageElement(file: File): Promise<HTMLImageElement> {
@@ -218,28 +248,32 @@ async function addImagePages(
   pdfDoc: PDFDocument,
   file: File,
   fonts: FontSet,
+  layout: PageLayout,
 ) {
   const { bytes, kind } = await imageToEmbedBytes(file);
   const image =
     kind === "jpg" ? await pdfDoc.embedJpg(bytes) : await pdfDoc.embedPng(bytes);
 
-  const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
-  const maxW = CONTENT_WIDTH;
-  const maxH = A4_HEIGHT - MARGIN * 2 - 24;
+  const page = pdfDoc.addPage([layout.width, layout.height]);
+  const maxW = layout.contentWidth;
+  const maxH = layout.contentHeight - 20;
   const scale = Math.min(maxW / image.width, maxH / image.height, 1);
   const drawW = image.width * scale;
   const drawH = image.height * scale;
-  const x = MARGIN + (maxW - drawW) / 2;
-  const y = MARGIN + (maxH - drawH) / 2;
+  const x = layout.margin + (maxW - drawW) / 2;
+  const y = layout.margin + (maxH - drawH) / 2;
 
-  drawMixedText(page, file.name, MARGIN, A4_HEIGHT - MARGIN, 9, fonts, rgb(0.45, 0.48, 0.55));
+  drawMixedText(
+    page,
+    file.name,
+    layout.margin,
+    layout.height - layout.margin,
+    9,
+    fonts,
+    rgb(0.45, 0.48, 0.55),
+  );
 
-  page.drawImage(image, {
-    x,
-    y,
-    width: drawW,
-    height: drawH,
-  });
+  page.drawImage(image, { x, y, width: drawW, height: drawH });
 }
 
 async function parseSpreadsheetRows(file: File): Promise<Record<string, string>[]> {
@@ -251,33 +285,174 @@ async function parseSpreadsheetRows(file: File): Promise<Record<string, string>[
   return parseCSVFile(file);
 }
 
+function getSpreadsheetMetrics(columnCount: number, layout: PageLayout) {
+  const minColWidth =
+    columnCount > 30 ? 28 : columnCount > 20 ? 34 : columnCount > 12 ? 40 : 48;
+  const colsPerPage = Math.max(
+    1,
+    Math.floor(layout.contentWidth / minColWidth),
+  );
+  const fontSize = Math.max(5, Math.min(9, 360 / columnCount));
+  const rowHeight = Math.max(12, Math.ceil(fontSize * 1.65));
+  const headerHeight = rowHeight + 6;
+  const rowsPerPage = Math.max(
+    1,
+    Math.floor((layout.contentHeight - 36 - headerHeight) / rowHeight),
+  );
+
+  return { colsPerPage, fontSize, rowHeight, headerHeight, rowsPerPage, minColWidth };
+}
+
 async function addSpreadsheetPages(
   pdfDoc: PDFDocument,
   file: File,
   fonts: FontSet,
+  layout: PageLayout,
+  onProgress?: (message: string, percent: number) => void,
+  progressBase = 0,
+  progressSpan = 10,
 ) {
   const rows = await parseSpreadsheetRows(file);
   if (rows.length === 0) throw new Error(`No rows found in ${file.name}.`);
 
   const columns = Object.keys(rows[0]);
-  const maxCols = Math.min(columns.length, 7);
-  const visibleColumns = columns.slice(0, maxCols);
-  const colWidth = CONTENT_WIDTH / maxCols;
-  const fontSize = 8;
-  const headerHeight = 22;
-  const rowHeight = 18;
-  const rowsPerPage = Math.floor(
-    (A4_HEIGHT - MARGIN * 2 - 40 - headerHeight) / rowHeight,
+  const metrics = getSpreadsheetMetrics(columns.length, layout);
+  const {
+    colsPerPage,
+    fontSize,
+    rowHeight,
+    headerHeight,
+    rowsPerPage,
+  } = metrics;
+
+  const colChunks = Math.ceil(columns.length / colsPerPage);
+  const rowChunks = Math.ceil(rows.length / rowsPerPage);
+  const totalPages = colChunks * rowChunks;
+  let pagesBuilt = 0;
+  let yieldCounter = 0;
+
+  for (let colStart = 0; colStart < columns.length; colStart += colsPerPage) {
+    const visibleColumns = columns.slice(colStart, colStart + colsPerPage);
+    const colWidth = layout.contentWidth / visibleColumns.length;
+    const cellPadding = 3;
+
+    for (let rowStart = 0; rowStart < rows.length; rowStart += rowsPerPage) {
+      const page = pdfDoc.addPage([layout.width, layout.height]);
+      let y = layout.height - layout.margin;
+      const rowEnd = Math.min(rowStart + rowsPerPage, rows.length);
+      const colEnd = Math.min(colStart + colsPerPage, columns.length);
+
+      drawMixedText(
+        page,
+        `${file.name} · cols ${colStart + 1}–${colEnd} of ${columns.length} · rows ${rowStart + 1}–${rowEnd} of ${rows.length}`,
+        layout.margin,
+        y,
+        8,
+        fonts,
+        rgb(0.2, 0.24, 0.32),
+      );
+      y -= 22;
+
+      visibleColumns.forEach((col, index) => {
+        const x = layout.margin + index * colWidth;
+        page.drawRectangle({
+          x,
+          y: y - headerHeight + 4,
+          width: colWidth,
+          height: headerHeight,
+          color: rgb(0.93, 0.95, 0.98),
+          borderColor: rgb(0.82, 0.86, 0.9),
+          borderWidth: 0.4,
+        });
+        const header = truncateToWidth(
+          col,
+          colWidth - cellPadding * 2,
+          fontSize,
+          fonts,
+        );
+        if (header) {
+          drawMixedText(
+            page,
+            header,
+            x + cellPadding,
+            y - fontSize - 2,
+            fontSize,
+            fonts,
+            rgb(0.15, 0.18, 0.24),
+          );
+        }
+      });
+      y -= headerHeight;
+
+      const pageRows = rows.slice(rowStart, rowEnd);
+      for (const row of pageRows) {
+        visibleColumns.forEach((col, index) => {
+          const x = layout.margin + index * colWidth;
+          page.drawRectangle({
+            x,
+            y: y - rowHeight + 4,
+            width: colWidth,
+            height: rowHeight,
+            borderColor: rgb(0.9, 0.91, 0.94),
+            borderWidth: 0.35,
+          });
+          const value = truncateToWidth(
+            row[col] ?? "",
+            colWidth - cellPadding * 2,
+            fontSize - 0.5,
+            fonts,
+          );
+          if (value) {
+            drawMixedText(
+              page,
+              value,
+              x + cellPadding,
+              y - fontSize - 1,
+              fontSize - 0.5,
+              fonts,
+            );
+          }
+        });
+        y -= rowHeight;
+      }
+
+      pagesBuilt++;
+      yieldCounter++;
+      if (await yieldToBrowser(yieldCounter)) yieldCounter = 0;
+
+      const pct = progressBase + Math.round((pagesBuilt / totalPages) * progressSpan);
+      onProgress?.(
+        `${file.name}: page ${pagesBuilt}/${totalPages} (${columns.length} cols, ${rows.length} rows)`,
+        pct,
+      );
+    }
+  }
+}
+
+async function addTextPages(
+  pdfDoc: PDFDocument,
+  file: File,
+  fonts: FontSet,
+  layout: PageLayout,
+) {
+  const text = await file.text();
+  const fontSize = 10;
+  const lineHeight = fontSize * 1.45;
+  const lines = wrapText(text, layout.contentWidth, fontSize, fonts);
+  const linesPerPage = Math.max(
+    1,
+    Math.floor((layout.contentHeight - 28) / lineHeight),
   );
 
-  for (let offset = 0; offset < rows.length; offset += rowsPerPage) {
-    const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
-    let y = A4_HEIGHT - MARGIN;
+  let yieldCounter = 0;
+  for (let offset = 0; offset < lines.length; offset += linesPerPage) {
+    const page = pdfDoc.addPage([layout.width, layout.height]);
+    let y = layout.height - layout.margin;
 
     drawMixedText(
       page,
-      `${file.name} — rows ${offset + 1}-${Math.min(offset + rowsPerPage, rows.length)} of ${rows.length}`,
-      MARGIN,
+      file.name,
+      layout.margin,
       y,
       10,
       fonts,
@@ -285,83 +460,27 @@ async function addSpreadsheetPages(
     );
     y -= 24;
 
-    visibleColumns.forEach((col, index) => {
-      const x = MARGIN + index * colWidth;
-      page.drawRectangle({
-        x,
-        y: y - headerHeight + 4,
-        width: colWidth,
-        height: headerHeight,
-        color: rgb(0.93, 0.95, 0.98),
-        borderColor: rgb(0.82, 0.86, 0.9),
-        borderWidth: 0.5,
-      });
-      drawWrappedText(page, col, x + 4, y - 2, colWidth - 8, fontSize, fonts, 2);
-    });
-    y -= headerHeight;
-
-    const pageRows = rows.slice(offset, offset + rowsPerPage);
-    for (const row of pageRows) {
-      visibleColumns.forEach((col, index) => {
-        const x = MARGIN + index * colWidth;
-        page.drawRectangle({
-          x,
-          y: y - rowHeight + 4,
-          width: colWidth,
-          height: rowHeight,
-          borderColor: rgb(0.88, 0.9, 0.94),
-          borderWidth: 0.5,
-        });
-        const value = row[col] ?? "";
-        drawWrappedText(page, value, x + 4, y - 2, colWidth - 8, fontSize - 0.5, fonts, 1);
-      });
-      y -= rowHeight;
-      if (y < MARGIN) break;
-    }
-
-    if (columns.length > maxCols) {
-      drawMixedText(
-        page,
-        `+${columns.length - maxCols} more columns not shown`,
-        MARGIN,
-        MARGIN - 4,
-        7,
-        fonts,
-        rgb(0.5, 0.52, 0.58),
-      );
-    }
-  }
-}
-
-async function addTextPages(pdfDoc: PDFDocument, file: File, fonts: FontSet) {
-  const text = await file.text();
-  const fontSize = 11;
-  const lineHeight = fontSize * 1.45;
-  const lines = wrapText(text, CONTENT_WIDTH, fontSize, fonts);
-  const linesPerPage = Math.floor((A4_HEIGHT - MARGIN * 2 - 30) / lineHeight);
-
-  for (let offset = 0; offset < lines.length; offset += linesPerPage) {
-    const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
-    let y = A4_HEIGHT - MARGIN;
-
-    drawMixedText(page, file.name, MARGIN, y, 10, fonts, rgb(0.2, 0.24, 0.32));
-    y -= 26;
-
-    const chunk = lines.slice(offset, offset + linesPerPage);
-    for (const line of chunk) {
-      if (line) drawMixedText(page, line, MARGIN, y, fontSize, fonts);
+    for (const line of lines.slice(offset, offset + linesPerPage)) {
+      if (line) drawMixedText(page, line, layout.margin, y, fontSize, fonts);
       y -= lineHeight;
     }
+
+    yieldCounter++;
+    if (await yieldToBrowser(yieldCounter)) yieldCounter = 0;
   }
 }
 
 export async function generatePdfFromFiles(
   files: ClassifiedFile[],
   onProgress?: (message: string, percent: number) => void,
+  options: PdfGenerateOptions = {},
 ): Promise<Uint8Array> {
   if (files.length === 0) {
     throw new Error("Add at least one supported file.");
   }
+
+  const orientation = options.orientation ?? "portrait";
+  const layout = getPageLayout(orientation);
 
   const pdfDoc = await PDFDocument.create();
   pdfDoc.setTitle("OmniUtil.pro — File to PDF");
@@ -373,18 +492,28 @@ export async function generatePdfFromFiles(
   const total = files.length;
   for (let index = 0; index < total; index++) {
     const { file, kind } = files[index];
-    const base = 10 + Math.round((index / total) * 85);
-    onProgress?.(`Processing ${file.name}…`, base);
+    const span = 85 / total;
+    const base = 10 + index * span;
+
+    onProgress?.(`Processing ${file.name}…`, Math.round(base));
 
     switch (kind) {
       case "image":
-        await addImagePages(pdfDoc, file, fonts);
+        await addImagePages(pdfDoc, file, fonts, layout);
         break;
       case "spreadsheet":
-        await addSpreadsheetPages(pdfDoc, file, fonts);
+        await addSpreadsheetPages(
+          pdfDoc,
+          file,
+          fonts,
+          layout,
+          onProgress,
+          base,
+          span,
+        );
         break;
       case "text":
-        await addTextPages(pdfDoc, file, fonts);
+        await addTextPages(pdfDoc, file, fonts, layout);
         break;
     }
   }
@@ -397,4 +526,4 @@ export const PDF_ACCEPT =
   "image/jpeg,image/png,image/webp,image/gif,image/bmp,.csv,.xlsx,.xls,.xlsm,text/plain,text/csv,text/markdown,.txt,.md,.json,.xml,.html";
 
 export const PDF_SUPPORTED_HINT =
-  "Images (JPG, PNG, WebP), Excel/CSV spreadsheets, and text files — বাংলা সহ যেকোনো ভাষা";
+  "Images, Excel/CSV (all columns), text — Portrait or Landscape · বাংলা supported";

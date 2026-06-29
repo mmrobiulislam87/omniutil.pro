@@ -11,6 +11,10 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import {
+  Monitor,
+  Smartphone,
+} from "lucide-react";
 import { FileDropzone } from "@/components/FileDropzone";
 import { Button } from "@/components/ui/button";
 import { ToolErrorBanner, ToolStateWrapper } from "@/components/ui/ToolStateWrapper";
@@ -23,6 +27,7 @@ import {
   generatePdfFromFiles,
   type ClassifiedFile,
   type PdfFileKind,
+  type PdfOrientation,
 } from "@/utils/pdfGenerator";
 
 type QueueItem = ClassifiedFile & { id: string };
@@ -43,6 +48,7 @@ export function FileToPdf() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
+  const [orientation, setOrientation] = useState<PdfOrientation>("portrait");
 
   const totalSize = useMemo(
     () => items.reduce((sum, item) => sum + item.file.size, 0),
@@ -109,10 +115,14 @@ export function FileToPdf() {
     setStatus("Starting…");
 
     try {
-      const pdfBytes = await generatePdfFromFiles(items, (message, percent) => {
-        setStatus(message);
-        setProgress(percent);
-      });
+      const pdfBytes = await generatePdfFromFiles(
+        items,
+        (message, percent) => {
+          setStatus(message);
+          setProgress(percent);
+        },
+        { orientation },
+      );
 
       const base =
         items.length === 1
@@ -129,7 +139,7 @@ export function FileToPdf() {
     } finally {
       setGenerating(false);
     }
-  }, [items]);
+  }, [items, orientation]);
 
   return (
     <div className="space-y-6">
@@ -163,6 +173,30 @@ export function FileToPdf() {
 
       {items.length > 0 && (
         <div className="space-y-4">
+          <section className="rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Page orientation
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <OrientationButton
+                active={orientation === "portrait"}
+                onClick={() => setOrientation("portrait")}
+                disabled={generating}
+                icon={Smartphone}
+                label="Portrait"
+                hint="A4 vertical — best for tall images & documents"
+              />
+              <OrientationButton
+                active={orientation === "landscape"}
+                onClick={() => setOrientation("landscape")}
+                disabled={generating}
+                icon={Monitor}
+                label="Landscape"
+                hint="A4 horizontal — best for wide Excel tables"
+              />
+            </div>
+          </section>
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
@@ -277,5 +311,42 @@ export function FileToPdf() {
         />
       )}
     </div>
+  );
+}
+
+function OrientationButton({
+  active,
+  onClick,
+  disabled,
+  icon: Icon,
+  label,
+  hint,
+}: {
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  icon: typeof Monitor;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "flex min-w-[140px] flex-1 flex-col items-start rounded-xl border px-4 py-3 text-left transition-colors sm:max-w-xs",
+        active
+          ? "border-blue-500 bg-blue-500/10 text-blue-300"
+          : "border-gray-700 bg-[#111827] text-gray-400 hover:border-gray-600 hover:text-gray-300",
+        disabled && "pointer-events-none opacity-50",
+      )}
+    >
+      <span className="mb-1 flex items-center gap-2 text-sm font-semibold">
+        <Icon className="h-4 w-4" />
+        {label}
+      </span>
+      <span className="text-[11px] leading-snug text-gray-500">{hint}</span>
+    </button>
   );
 }
