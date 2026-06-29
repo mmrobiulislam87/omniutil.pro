@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ToolStateWrapper } from "@/components/ui/ToolStateWrapper";
+import { TemplateLibrary } from "@/components/prompt-architect/TemplateLibrary";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { cn } from "@/lib/cn";
 import {
@@ -17,6 +18,10 @@ import {
   type PromptFramework,
   type PromptValues,
 } from "@/utils/promptTemplates";
+import {
+  resolveTemplateValues,
+  type PromptTemplate,
+} from "@/utils/promptTemplateLibrary";
 
 const STORAGE_KEY = "omniutil-prompt-architect";
 
@@ -41,6 +46,7 @@ export function PromptArchitect() {
   const [frameworkId, setFrameworkId] = useState(PROMPT_FRAMEWORKS[0].id);
   const [format, setFormat] = useState<PromptFormat>("structured");
   const [copied, setCopied] = useState(false);
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
 
   const framework = useMemo(
     () =>
@@ -86,7 +92,17 @@ export function PromptArchitect() {
       const nextFramework =
         PROMPT_FRAMEWORKS.find((f) => f.id === nextId) ?? PROMPT_FRAMEWORKS[0];
       setFrameworkId(nextId);
+      setActiveTemplateId(null);
       reset(emptyValuesForFramework(nextFramework));
+    },
+    [reset],
+  );
+
+  const handleTemplateSelect = useCallback(
+    (template: PromptTemplate) => {
+      setFrameworkId(template.frameworkId);
+      setActiveTemplateId(template.id);
+      reset(resolveTemplateValues(template));
     },
     [reset],
   );
@@ -110,6 +126,7 @@ export function PromptArchitect() {
   }, [masterPrompt]);
 
   const handleClear = useCallback(() => {
+    setActiveTemplateId(null);
     reset(emptyValuesForFramework(framework));
   }, [framework, reset]);
 
@@ -163,6 +180,12 @@ export function PromptArchitect() {
       </div>
 
       <p className="text-sm text-gray-500">{framework.description}</p>
+
+      <TemplateLibrary
+        frameworkId={frameworkId}
+        activeTemplateId={activeTemplateId}
+        onSelect={handleTemplateSelect}
+      />
 
       <div className="grid gap-8 lg:grid-cols-2 lg:gap-10">
         <section className="space-y-5 rounded-2xl border border-gray-800 bg-[#111827] p-6 md:p-8">

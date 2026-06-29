@@ -3,7 +3,7 @@
 > Privacy-first, zero-server-cost utility platform for developers, creators, and professionals.
 > All processing happens 100% in the browser — your data never leaves your device.
 
-**Current version:** `v0.2.6`  
+**Current version:** `v0.2.7`  
 **Last updated:** June 29, 2026
 
 ---
@@ -70,12 +70,12 @@ P2  ░░░░░░░░░░░░░░░░░░░░   0%
 
 **Key files:** `ToolLayout.tsx`, `CommandPalette.tsx`, `ToolStateWrapper.tsx`, `FileDropzone.tsx`
 
-### 1.2 Tool Enhancements — ~80%
+### 1.2 Tool Enhancements — ~90%
 
 | Tool | Done | Remaining |
 |------|------|-----------|
 | **Media Optimizer** | AVIF, batch ZIP (`jszip`), before/after slider | — |
-| **Prompt Architect** | CO-STAR, RISEN, RTCE, APE | Template library |
+| **Prompt Architect** | CO-STAR, RISEN, RTCE, APE, template library (12 templates) | — |
 | **Data Sanitizer** | CSV, Excel (`.xlsx`/`.xls`), dedupe, validation, column mapping | Anonymize columns |
 
 ### 1.3 SEO & Discoverability — ✅ Complete
@@ -216,6 +216,11 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 ## Release History
 
+### v0.2.7 — Prompt Template Library (Jun 29, 2026)
+- 12 curated templates across Writing, Marketing, Development, Business, Research
+- Category filters + framework-scoped view with “show all” toggle
+- One-click load into framework fields with live preview
+
 ### v0.2.6 — RTCE & APE Frameworks (Jun 29, 2026)
 - Prompt Architect: RTCE (Role, Task, Context, Examples) framework
 - Prompt Architect: APE (Action, Purpose, Expectation) framework
@@ -285,10 +290,9 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ## Recommended Next Steps
 
 1. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
-2. **Phase 1.2** — Prompt template library (Prompt Architect) ← **next**
-3. **Phase 1.2** — Column anonymization (Data Sanitizer)
+2. **Phase 1.2** — Column anonymization (Data Sanitizer) ← **next**
+3. **Phase 2.1** — JSON Formatter, PDF Merger, QR Code Generator
 4. **GSC follow-up** — Request indexing; check Page indexing in 24–48h
-5. **Phase 2.1** — JSON Formatter, PDF Merger, QR Code Generator
 
 ---
 
