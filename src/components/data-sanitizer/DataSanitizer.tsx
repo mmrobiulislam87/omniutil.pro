@@ -14,8 +14,10 @@ import {
   getColumnNames,
   guessEmailColumn,
   guessPhoneColumn,
+  guessSensitiveColumns,
   parseDataFile,
   rowsToCSV,
+  type AnonymizeMethod,
   type CleanResult,
   type DataFileKind,
 } from "@/utils/dataCleaner";
@@ -23,6 +25,29 @@ import {
 const PREVIEW_ROWS = 8;
 const ACCEPTED_FILES =
   ".csv,text/csv,.xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
+
+const ANONYMIZE_METHODS: { value: AnonymizeMethod; label: string; hint: string }[] = [
+  {
+    value: "hash",
+    label: "Hash (SHA-256)",
+    hint: "Deterministic 16-char hex — same value always maps to same hash.",
+  },
+  {
+    value: "mask",
+    label: "Mask",
+    hint: "Partially hide values (e.g. jo***@email.com, 55****89).",
+  },
+  {
+    value: "redact",
+    label: "Redact",
+    hint: 'Replace every value with "[ANONYMIZED]".',
+  },
+  {
+    value: "pseudonym",
+    label: "Pseudonym",
+    hint: "Map values to column_0001, column_0002 — consistent within the file.",
+  },
+];
 
 export function DataSanitizer() {
   const [sourceFile, setSourceFile] = useState<File | null>(null);
@@ -44,6 +69,10 @@ export function DataSanitizer() {
   const [emailColumn, setEmailColumn] = useState("");
   const [phoneColumn, setPhoneColumn] = useState("");
   const [includedColumns, setIncludedColumns] = useState<string[]>([]);
+  const [anonymizeEnabled, setAnonymizeEnabled] = useState(false);
+  const [anonymizeColumns, setAnonymizeColumns] = useState<string[]>([]);
+  const [anonymizeMethod, setAnonymizeMethod] = useState<AnonymizeMethod>("hash");
+  const [cleaning, setCleaning] = useState(false);
 
   const columns = useMemo(() => getColumnNames(rawRows), [rawRows]);
   const activeColumns = useMemo(
@@ -70,6 +99,10 @@ export function DataSanitizer() {
     setError(null);
     setEmailColumn("");
     setPhoneColumn("");
+    setAnonymizeEnabled(false);
+    setAnonymizeColumns([]);
+    setAnonymizeMethod("hash");
+    setCleaning(false);
   }, []);
 
   const loadFile = useCallback(
@@ -154,18 +187,41 @@ export function DataSanitizer() {
     setResult(null);
   }, [columns]);
 
-  const runClean = useCallback(() => {
+  const toggleAnonymizeColumn = useCallback((column: string) => {
+    setAnonymizeColumns((prev) =>
+      prev.includes(column)
+        ? prev.filter((col) => col !== column)
+        : [...prev, column],
+    );
+    setResult(null);
+  }, []);
+
+  const suggestSensitiveColumns = useCallback(() => {
+    const sensitive = guessSensitiveColumns(activeColumns);
+    setAnonymizeColumns(sensitive.length > 0 ? sensitive : activeColumns);
+    setAnonymizeEnabled(true);
+    setResult(null);
+  }, [activeColumns]);
+
+  const runClean = useCallback(async () => {
     if (rawRows.length === 0 || activeColumns.length === 0) return;
 
-    const mappedRows = filterRowsByColumns(rawRows, activeColumns);
-    const cleaned = cleanData(mappedRows, {
-      removeDuplicates,
-      validateEmails,
-      validatePhones,
-      emailColumn: validateEmails ? emailColumn : undefined,
-      phoneColumn: validatePhones ? phoneColumn : undefined,
-    });
-    setResult(cleaned);
+    setCleaning(true);
+    try {
+      const mappedRows = filterRowsByColumns(rawRows, activeColumns);
+      const cleaned = await cleanData(mappedRows, {
+        removeDuplicates,
+        validateEmails,
+        validatePhones,
+        emailColumn: validateEmails ? emailColumn : undefined,
+        phoneColumn: validatePhones ? phoneColumn : undefined,
+        anonymizeColumns: anonymizeEnabled ? anonymizeColumns : [],
+        anonymizeMethod,
+      });
+      setResult(cleaned);
+    } finally {
+      setCleaning(false);
+    }
   }, [
     rawRows,
     activeColumns,
@@ -174,6 +230,9 @@ export function DataSanitizer() {
     validatePhones,
     emailColumn,
     phoneColumn,
+    anonymizeEnabled,
+    anonymizeColumns,
+    anonymizeMethod,
   ]);
 
   const handleDownload = useCallback(() => {
@@ -371,13 +430,96 @@ export function DataSanitizer() {
                 </div>
               </label>
 
+              <div className="space-y-3 rounded-lg border border-gray-800 p-4">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={anonymizeEnabled}
+                    onChange={(e) => {
+                      setAnonymizeEnabled(e.target.checked);
+                      setResult(null);
+                    }}
+                    className="mt-1 accent-blue-500"
+                  />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-100">
+                      Anonymize columns
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Mask PII before export — runs after dedupe and validation.
+                    </p>
+                  </div>
+                </label>
+
+                {anonymizeEnabled && (
+                  <div className="space-y-3 border-t border-gray-800 pt-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Label htmlFor="anonymize-method">Method</Label>
+                      <button
+                        type="button"
+                        onClick={suggestSensitiveColumns}
+                        className="text-xs font-medium text-blue-400 hover:text-blue-300"
+                      >
+                        Suggest sensitive columns
+                      </button>
+                    </div>
+                    <select
+                      id="anonymize-method"
+                      value={anonymizeMethod}
+                      onChange={(e) => {
+                        setAnonymizeMethod(e.target.value as AnonymizeMethod);
+                        setResult(null);
+                      }}
+                      className="flex h-9 w-full rounded-lg border border-gray-700 bg-[#0B0F19] px-2 text-sm text-gray-100"
+                    >
+                      {ANONYMIZE_METHODS.map((method) => (
+                        <option key={method.value} value={method.value}>
+                          {method.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-600">
+                      {
+                        ANONYMIZE_METHODS.find((m) => m.value === anonymizeMethod)
+                          ?.hint
+                      }
+                    </p>
+
+                    <div className="max-h-36 space-y-2 overflow-y-auto rounded-lg border border-gray-800 p-3">
+                      {activeColumns.map((col) => (
+                        <label
+                          key={col}
+                          className="flex cursor-pointer items-center gap-2 text-sm text-gray-200"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={anonymizeColumns.includes(col)}
+                            onChange={() => toggleAnonymizeColumn(col)}
+                            className="accent-blue-500"
+                          />
+                          <span className="truncate">{col}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-600">
+                      {anonymizeColumns.length}/{activeColumns.length} columns
+                      to anonymize
+                    </p>
+                  </div>
+                )}
+              </div>
+
               <Button
                 onClick={runClean}
                 className="w-full"
-                disabled={activeColumns.length === 0}
+                disabled={
+                  activeColumns.length === 0 ||
+                  cleaning ||
+                  (anonymizeEnabled && anonymizeColumns.length === 0)
+                }
               >
                 <Sparkles className="h-4 w-4" />
-                Clean data
+                {cleaning ? "Cleaning…" : "Clean data"}
               </Button>
             </section>
           </div>
@@ -389,12 +531,13 @@ export function DataSanitizer() {
 
             {result ? (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                   <Stat label="Original rows" value={result.originalRows} />
                   <Stat label="Clean rows" value={result.totalRows} highlight />
                   <Stat label="Duplicates removed" value={result.removedDuplicates} />
                   <Stat label="Invalid emails" value={result.invalidEmails} />
                   <Stat label="Invalid phones" value={result.invalidPhones} />
+                  <Stat label="Cells anonymized" value={result.anonymizedCells} />
                 </div>
                 <Button onClick={handleDownload} className="w-full sm:w-auto">
                   <Download className="h-4 w-4" />

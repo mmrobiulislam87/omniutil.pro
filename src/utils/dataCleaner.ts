@@ -9,12 +9,16 @@ export type ParsedDataFile = {
   activeSheet?: string;
 };
 
+export type AnonymizeMethod = "hash" | "mask" | "redact" | "pseudonym";
+
 export type CleanOptions = {
   removeDuplicates?: boolean;
   validateEmails?: boolean;
   validatePhones?: boolean;
   emailColumn?: string;
   phoneColumn?: string;
+  anonymizeColumns?: string[];
+  anonymizeMethod?: AnonymizeMethod;
 };
 
 export type CleanResult = {
@@ -22,6 +26,7 @@ export type CleanResult = {
   removedDuplicates: number;
   invalidEmails: number;
   invalidPhones: number;
+  anonymizedCells: number;
   totalRows: number;
   originalRows: number;
 };
@@ -83,16 +88,138 @@ export function deduplicateRows(
   return { unique, removed: rows.length - unique.length };
 }
 
-export function cleanData(
+function maskValue(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (trimmed.includes("@")) {
+    const [local, domain] = trimmed.split("@");
+    if (!domain) return "****";
+    const maskedLocal =
+      local.length <= 2
+        ? "*".repeat(local.length)
+        : `${local.slice(0, 1)}${"*".repeat(Math.max(local.length - 2, 1))}${local.slice(-1)}`;
+    return `${maskedLocal}@${domain}`;
+  }
+
+  if (trimmed.length <= 4) return "*".repeat(trimmed.length);
+  return `${trimmed.slice(0, 2)}${"*".repeat(trimmed.length - 4)}${trimmed.slice(-2)}`;
+}
+
+async function hashValue(value: string): Promise<string> {
+  if (!value.trim()) return "";
+
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(value),
+    );
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("")
+      .slice(0, 16);
+  }
+
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 33) ^ value.charCodeAt(i);
+  }
+  return `h${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function pseudonymValue(
+  value: string,
+  column: string,
+  cache: Map<string, string>,
+  counter: Map<string, number>,
+): string {
+  if (!value.trim()) return "";
+
+  const cacheKey = `${column}::${value}`;
+  const existing = cache.get(cacheKey);
+  if (existing) return existing;
+
+  const next = (counter.get(column) ?? 0) + 1;
+  counter.set(column, next);
+  const slug = column.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "") || "col";
+  const pseudonym = `${slug}_${String(next).padStart(4, "0")}`;
+  cache.set(cacheKey, pseudonym);
+  return pseudonym;
+}
+
+async function anonymizeValue(
+  value: string,
+  column: string,
+  method: AnonymizeMethod,
+  pseudonymCache: Map<string, string>,
+  pseudonymCounter: Map<string, number>,
+): Promise<string> {
+  if (!value.trim()) return "";
+
+  switch (method) {
+    case "hash":
+      return hashValue(value);
+    case "mask":
+      return maskValue(value);
+    case "redact":
+      return "[ANONYMIZED]";
+    case "pseudonym":
+      return pseudonymValue(value, column, pseudonymCache, pseudonymCounter);
+    default:
+      return value;
+  }
+}
+
+async function anonymizeRows(
+  rows: Record<string, string>[],
+  columns: string[],
+  method: AnonymizeMethod,
+): Promise<{ rows: Record<string, string>[]; anonymizedCells: number }> {
+  if (columns.length === 0) {
+    return { rows, anonymizedCells: 0 };
+  }
+
+  const pseudonymCache = new Map<string, string>();
+  const pseudonymCounter = new Map<string, number>();
+  let anonymizedCells = 0;
+
+  const anonymized = await Promise.all(
+    rows.map(async (row) => {
+      const nextRow = { ...row };
+
+      for (const column of columns) {
+        const original = row[column] ?? "";
+        if (!original.trim()) continue;
+
+        nextRow[column] = await anonymizeValue(
+          original,
+          column,
+          method,
+          pseudonymCache,
+          pseudonymCounter,
+        );
+        anonymizedCells++;
+      }
+
+      return nextRow;
+    }),
+  );
+
+  return { rows: anonymized, anonymizedCells };
+}
+
+export async function cleanData(
   rows: Record<string, string>[],
   options: CleanOptions = {},
-): CleanResult {
+): Promise<CleanResult> {
   const {
     removeDuplicates = true,
     validateEmails = false,
     validatePhones = false,
     emailColumn,
     phoneColumn,
+    anonymizeColumns = [],
+    anonymizeMethod = "hash",
   } = options;
 
   const originalRows = rows.length;
@@ -100,6 +227,7 @@ export function cleanData(
   let removedDuplicates = 0;
   let invalidEmails = 0;
   let invalidPhones = 0;
+  let anonymizedCells = 0;
 
   if (removeDuplicates) {
     const result = deduplicateRows(working);
@@ -127,11 +255,21 @@ export function cleanData(
     });
   }
 
+  if (anonymizeColumns.length > 0) {
+    const columnsToAnonymize = anonymizeColumns.filter((col) =>
+      getColumnNames(working).includes(col),
+    );
+    const result = await anonymizeRows(working, columnsToAnonymize, anonymizeMethod);
+    working = result.rows;
+    anonymizedCells = result.anonymizedCells;
+  }
+
   return {
     rows: working,
     removedDuplicates,
     invalidEmails,
     invalidPhones,
+    anonymizedCells,
     totalRows: working.length,
     originalRows,
   };
@@ -153,6 +291,14 @@ export function guessEmailColumn(columns: string[]): string | undefined {
 
 export function guessPhoneColumn(columns: string[]): string | undefined {
   return columns.find((col) => /phone|mobile|tel/i.test(col));
+}
+
+export function guessSensitiveColumns(columns: string[]): string[] {
+  return columns.filter((col) =>
+    /name|email|e-?mail|phone|mobile|tel|address|ssn|social|birth|dob|password|passport|credit|card|iban|account/i.test(
+      col,
+    ),
+  );
 }
 
 const EXCEL_EXTENSIONS = [".xlsx", ".xls", ".xlsm"];
