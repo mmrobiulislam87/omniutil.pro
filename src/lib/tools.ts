@@ -38,13 +38,13 @@ export const TOOLS: Tool[] = [
     name: "Prompt Architect",
     dashboardTitle: "AI Prompt Architect",
     description:
-      "Transform simple text into master-level AI prompts using CO-STAR & RISEN elite engineering frameworks.",
+      "Transform simple text into master-level AI prompts using CO-STAR, RISEN, RTCE & APE elite engineering frameworks.",
     href: "/prompt-architect",
     icon: Sparkles,
     emoji: "🧠",
     badge: "AI Utility",
     category: "AI",
-    tags: ["prompt", "ai", "costar", "llm", "chatgpt", "claude"],
+    tags: ["prompt", "ai", "costar", "risen", "rtce", "ape", "llm", "chatgpt", "claude"],
   },
   {
     id: "data-sanitizer",

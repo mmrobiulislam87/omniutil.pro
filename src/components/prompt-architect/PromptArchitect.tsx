@@ -132,7 +132,7 @@ export function PromptArchitect() {
               type="button"
               onClick={() => handleFrameworkChange(fw.id)}
               className={cn(
-                "rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
+                "rounded-lg border px-3 py-2 text-sm font-medium transition-colors sm:px-4",
                 frameworkId === fw.id
                   ? "border-blue-500 bg-blue-500/10 text-blue-400"
                   : "border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300",

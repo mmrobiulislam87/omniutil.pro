@@ -120,7 +120,72 @@ export const RISEN_FRAMEWORK: PromptFramework = {
   ],
 };
 
-export const PROMPT_FRAMEWORKS = [COSTAR_FRAMEWORK, RISEN_FRAMEWORK];
+export const RTCE_FRAMEWORK: PromptFramework = {
+  id: "rtce",
+  name: "RTCE",
+  description:
+    "Role, Task, Context, Examples — ground the model with persona, clear action, background, and reference outputs.",
+  fields: [
+    {
+      key: "role",
+      label: "Role",
+      placeholder: "e.g. You are a senior UX researcher…",
+      description: "Expertise or perspective the AI should adopt.",
+    },
+    {
+      key: "task",
+      label: "Task",
+      placeholder: "e.g. Draft a usability test plan for a mobile checkout flow…",
+      description: "The specific action or deliverable you need.",
+    },
+    {
+      key: "context",
+      label: "Context",
+      placeholder: "Audience, constraints, purpose, or background facts…",
+      description: "Situation details that shape a relevant response.",
+    },
+    {
+      key: "examples",
+      label: "Examples",
+      placeholder: "Sample inputs, ideal outputs, or patterns to follow…",
+      description: "Reference material that demonstrates what good looks like.",
+    },
+  ],
+};
+
+export const APE_FRAMEWORK: PromptFramework = {
+  id: "ape",
+  name: "APE",
+  description:
+    "Action, Purpose, Expectation — a minimal three-field framework for fast, high-impact everyday prompts.",
+  fields: [
+    {
+      key: "action",
+      label: "Action",
+      placeholder: "e.g. Summarize this meeting transcript into key decisions…",
+      description: "What you want the AI to do — the core verb of the request.",
+    },
+    {
+      key: "purpose",
+      label: "Purpose",
+      placeholder: "e.g. I need a quick reference before tomorrow's standup…",
+      description: "Why you need the output and how you will use it.",
+    },
+    {
+      key: "expectation",
+      label: "Expectation",
+      placeholder: "e.g. 5 bullet points, under 20 words each, decisions only…",
+      description: "Format, length, tone, or quality bar for the response.",
+    },
+  ],
+};
+
+export const PROMPT_FRAMEWORKS = [
+  COSTAR_FRAMEWORK,
+  RISEN_FRAMEWORK,
+  RTCE_FRAMEWORK,
+  APE_FRAMEWORK,
+];
 
 export function getFrameworkById(id: string): PromptFramework | undefined {
   return PROMPT_FRAMEWORKS.find((f) => f.id === id);
