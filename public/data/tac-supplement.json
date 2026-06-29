@@ -1,0 +1,37 @@
+{
+  "86256306": {
+    "brand": "vivo",
+    "model": "V2254",
+    "name": "vivo Y02t",
+    "altNames": ["Y02T", "V2254"],
+    "imageUrl": "https://fdn2.gsmarena.com/vv/bigpic/vivo-y02t.jpg",
+    "chipset": "MediaTek Helio P35",
+    "year": "2023",
+    "os": "Android 13, Funtouch 13",
+    "network": "GSM / HSPA / LTE",
+    "display": "6.51\" HD+ (720×1600)",
+    "battery": "5000 mAh, 10W charging",
+    "storage": "64GB / 128GB, microSD",
+    "camera": "8 MP main, 5 MP selfie"
+  },
+  "86256305": {
+    "brand": "vivo",
+    "model": "V2254",
+    "name": "vivo Y02t",
+    "imageUrl": "https://fdn2.gsmarena.com/vv/bigpic/vivo-y02t.jpg",
+    "chipset": "MediaTek Helio P35",
+    "year": "2023",
+    "os": "Android 13",
+    "network": "GSM / LTE"
+  },
+  "35332510": {
+    "brand": "Apple",
+    "model": "A1778",
+    "name": "iPhone 7",
+    "imageUrl": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-7.jpg",
+    "chipset": "Apple A10 Fusion",
+    "year": "2016",
+    "os": "iOS",
+    "network": "GSM / CDMA / HSPA / EVDO / LTE"
+  }
+}

@@ -44,3 +44,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Osmocom source dump (regenerate with npm run build:tac)
+/public/data/tac-osmocom.json

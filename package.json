@@ -3,6 +3,7 @@
   "version": "0.2.1",
   "private": true,
   "scripts": {
+    "build:tac": "node scripts/build-tac-index.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
