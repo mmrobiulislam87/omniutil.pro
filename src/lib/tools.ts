@@ -1,5 +1,6 @@
 import {
   Database,
+  FileText,
   ImageIcon,
   Sparkles,
   type LucideIcon,
@@ -58,6 +59,28 @@ export const TOOLS: Tool[] = [
     badge: "Privacy-First",
     category: "Data",
     tags: ["csv", "excel", "clean", "dedupe", "validate", "sanitize"],
+  },
+  {
+    id: "file-to-pdf",
+    name: "File to PDF",
+    dashboardTitle: "Universal File to PDF",
+    description:
+      "Convert images, Excel, CSV, and text files into a beautiful PDF instantly — full বাংলা and multilingual Unicode support. 100% client-side.",
+    href: "/file-to-pdf",
+    icon: FileText,
+    emoji: "📄",
+    badge: "Unicode / Client-side",
+    category: "Document",
+    tags: [
+      "pdf",
+      "convert",
+      "image to pdf",
+      "excel to pdf",
+      "bengali pdf",
+      "unicode",
+      "merge images",
+      "document",
+    ],
   },
 ];
 

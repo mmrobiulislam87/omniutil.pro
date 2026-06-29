@@ -16,6 +16,10 @@ export const siteConfig = {
     "AI prompt generator",
     "no-server utilities",
     "batch image compressor",
+    "file to pdf",
+    "image to pdf",
+    "excel to pdf",
+    "bengali pdf converter",
   ],
 } as const;
 

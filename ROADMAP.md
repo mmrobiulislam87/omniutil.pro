@@ -3,7 +3,7 @@
 > Privacy-first, zero-server-cost utility platform for developers, creators, and professionals.
 > All processing happens 100% in the browser — your data never leaves your device.
 
-**Current version:** `v0.2.8`  
+**Current version:** `v0.3.0`  
 **Last updated:** June 29, 2026
 
 ---
@@ -20,14 +20,14 @@ Build the most trusted client-side utility platform on the web — scalable to 1
 |-------|--------|--------|
 | **MVP** | Core architecture + 3 tools | ✅ Complete |
 | **Phase 1** | Polish & Launch | ✅ Complete |
-| **Phase 2** | Growth & new tools | 📋 Planned |
+| **Phase 2** | Growth & new tools | 🚧 In Progress (~15%) |
 | **Phase 3** | Scale to 100 tools | 📋 Planned |
 | **Phase 4** | Ecosystem | 💡 Future |
 
 ```
 MVP ████████████████████ 100%
 P1  ████████████████████ 100%
-P2  ░░░░░░░░░░░░░░░░░░░░   0%
+P2  ███░░░░░░░░░░░░░░░░░  15%
 ```
 
 ---
@@ -142,13 +142,14 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 | # | Tool | Category | Stack | Status |
 |---|------|----------|-------|--------|
-| 4 | JSON Formatter & Validator | Dev | Pure JS | 📋 |
-| 5 | PDF Merger / Splitter | Document | `pdf-lib` | 📋 |
-| 6 | QR Code Generator | Utility | `qrcode` | 📋 |
-| 7 | Color Palette Generator | Design | Canvas API | 📋 |
-| 8 | Markdown → HTML | Dev | `marked` | 📋 |
-| 9 | Password Generator | Security | Web Crypto API | 📋 |
-| 10 | Base64 Encode/Decode | Dev | Native APIs | 📋 |
+| 4 | **File to PDF** (Unicode / বাংলা) | Document | `pdf-lib` + Noto fonts | ✅ Live |
+| 5 | JSON Formatter & Validator | Dev | Pure JS | 📋 |
+| 6 | PDF Merger / Splitter | Document | `pdf-lib` | 📋 |
+| 7 | QR Code Generator | Utility | `qrcode` | 📋 |
+| 8 | Color Palette Generator | Design | Canvas API | 📋 |
+| 9 | Markdown → HTML | Dev | `marked` | 📋 |
+| 10 | Password Generator | Security | Web Crypto API | 📋 |
+| 11 | Base64 Encode/Decode | Dev | Native APIs | 📋 |
 
 **Adding a new tool:**
 1. Add entry to `src/lib/tools.ts` (auto-added to sitemap)
@@ -215,6 +216,12 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ---
 
 ## Release History
+
+### v0.3.0 — File to PDF (Jun 29, 2026)
+- New tool: Universal File to PDF (`/file-to-pdf`)
+- Images (multi-merge), Excel/CSV tables, text files → one PDF
+- Noto Sans + Noto Sans Bengali — full Unicode / বাংলা text rendering
+- 100% client-side via `pdf-lib` + `@pdf-lib/fontkit`
 
 ### v0.2.8 — Column Anonymization (Jun 29, 2026)
 - Data Sanitizer: hash, mask, redact, and pseudonym methods
@@ -295,7 +302,8 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ## Recommended Next Steps
 
 1. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
-2. **Phase 2.1** — JSON Formatter, PDF Merger, QR Code Generator ← **next**
+2. **Phase 2.1** — JSON Formatter ← **next**
+3. **Phase 2.1** — QR Code Generator, PDF Merger
 3. **GSC follow-up** — Request indexing; check Page indexing
 
 ---
