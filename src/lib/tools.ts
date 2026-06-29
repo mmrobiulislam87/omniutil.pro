@@ -4,6 +4,7 @@ import {
   Eraser,
   FileText,
   ImageIcon,
+  Smartphone,
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
@@ -23,6 +24,28 @@ export type Tool = {
 };
 
 export const TOOLS: Tool[] = [
+  {
+    id: "imei-checker",
+    name: "IMEI Checker",
+    dashboardTitle: "IMEI Checker & Device Lookup",
+    description:
+      "Validate IMEI numbers and identify phone brand and model from the TAC code. 100% private — your IMEI never leaves your browser.",
+    href: "/imei-checker",
+    icon: Smartphone,
+    emoji: "📱",
+    badge: "Privacy-First",
+    category: "Utility",
+    tags: [
+      "imei",
+      "imei checker",
+      "tac",
+      "phone model",
+      "device lookup",
+      "serial",
+      "mobile",
+      "validator",
+    ],
+  },
   {
     id: "json-formatter",
     name: "JSON Formatter",
