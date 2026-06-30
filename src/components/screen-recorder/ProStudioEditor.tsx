@@ -34,6 +34,7 @@ import {
   type AspectMode,
   type ExportPreset,
 } from "@/utils/proStudioExport";
+import { resetFfmpegLoader } from "@/utils/ffmpegLoader";
 import { SPEED_OPTIONS } from "@/utils/videoTrimmer";
 import {
   fileToBytes,
@@ -262,6 +263,7 @@ export function ProStudioEditor({
               ? err
               : "Export failed. Try Balanced preset or download raw WebM.";
         onError(message);
+        resetFfmpegLoader();
       } finally {
         onExportingChange(false);
       }

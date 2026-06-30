@@ -1,4 +1,5 @@
 const FFMPEG_CORE_VERSION = "0.12.10";
+const LOAD_TIMEOUT_MS = 120_000;
 
 export type FfmpegProgressCallback = (message: string, ratio?: number) => void;
 
@@ -32,15 +33,41 @@ function coreSources(): string[] {
   return sources;
 }
 
-function classWorkerUrl(): string | undefined {
-  if (typeof window === "undefined") return undefined;
-  return `${window.location.origin}/ffmpeg/class-worker.js`;
+async function probeCore(base: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${base}/ffmpeg-core.js`, { method: "HEAD" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }
 
 async function tryLoadFromBase(
   base: string,
   onProgress?: FfmpegProgressCallback,
 ): Promise<FfmpegBundle> {
+  onProgress?.("Downloading video engine (~30 MB first time)…", 12);
+
   const { FFmpeg } = await import("@ffmpeg/ffmpeg");
   const { fetchFile } = await import("@ffmpeg/util");
   const ffmpeg = new FFmpeg();
@@ -52,27 +79,23 @@ async function tryLoadFromBase(
     onProgress?.("Rendering…", Math.min(99, Math.round(progress * 100)));
   });
 
-  const workerURL = classWorkerUrl();
-  const loadConfig: {
-    coreURL: string;
-    wasmURL: string;
-    classWorkerURL?: string;
-  } = {
-    coreURL: `${base}/ffmpeg-core.js`,
-    wasmURL: `${base}/ffmpeg-core.wasm`,
-  };
+  // Do NOT set classWorkerURL — the copied public worker breaks (missing ./const.js).
+  // Webpack bundles @ffmpeg/ffmpeg's worker.js correctly from the app chunk.
+  await withTimeout(
+    ffmpeg.load({
+      coreURL: `${base}/ffmpeg-core.js`,
+      wasmURL: `${base}/ffmpeg-core.wasm`,
+    }),
+    LOAD_TIMEOUT_MS,
+    "Video engine load timed out. Check connection and try again.",
+  );
 
-  if (workerURL && base.startsWith(window.location.origin)) {
-    loadConfig.classWorkerURL = workerURL;
-  }
-
-  await ffmpeg.load(loadConfig);
+  onProgress?.("Engine ready", 18);
   return { ffmpeg, fetchFile };
 }
 
 /**
  * Load ffmpeg.wasm using same-origin static files (no blob URLs).
- * Blob-based coreURL breaks dynamic import() in production workers.
  */
 export async function loadFfmpegEngine(
   onProgress?: FfmpegProgressCallback,
@@ -84,6 +107,13 @@ export async function loadFfmpegEngine(
 
       for (const base of coreSources()) {
         try {
+          if (base.startsWith(window.location.origin)) {
+            const ok = await probeCore(base);
+            if (!ok) {
+              errors.push(`${base}: files not found (404)`);
+              continue;
+            }
+          }
           return await tryLoadFromBase(base, onProgress);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
