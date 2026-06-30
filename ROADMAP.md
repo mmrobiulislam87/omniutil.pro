@@ -3,8 +3,8 @@
 > Privacy-first, zero-server-cost utility platform for developers, creators, and professionals.
 > All processing happens 100% in the browser — your data never leaves your device.
 
-**Current version:** `v0.8.0`  
-**Last updated:** June 29, 2026
+**Current version:** `v0.8.1`  
+**Last updated:** June 30, 2026
 
 ---
 
@@ -20,14 +20,14 @@ Build the most trusted client-side utility platform on the web — scalable to 1
 |-------|--------|--------|
 | **MVP** | Core architecture + 3 tools | ✅ Complete |
 | **Phase 1** | Polish & Launch | ✅ Complete |
-| **Phase 2** | Growth & new tools | 🚧 In Progress (~70%) |
+| **Phase 2** | Growth & new tools | 🚧 In Progress (~75%) |
 | **Phase 3** | Scale to 100 tools | 📋 Planned |
 | **Phase 4** | Ecosystem | 💡 Future |
 
 ```
 MVP ████████████████████ 100%
 P1  ████████████████████ 100%
-P2  ██████████████░░░░░░  70%
+P2  ███████████████░░░░░  75%
 ```
 
 ---
@@ -90,6 +90,7 @@ P2  ██████████████░░░░░░  70%
 - [x] App icons (`icon.tsx`, `apple-icon.tsx`)
 - [x] Central config (`src/lib/site.ts`, `.env.example`)
 - [x] Google Search Console verification meta tag (`layout.tsx`)
+- [ ] **Known issue:** `/sitemap.xml` returns 500 in production (fix pending)
 
 **Live SEO routes:**
 
@@ -116,21 +117,33 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 - [x] Custom domain: `omniutil.pro` (Vercel DNS, SSL active)
 - [x] Public hero tagline — `Smart Utilities. 100% Private.`
 - [x] Google Search Console — property verified (`https://www.omniutil.pro/`)
-- [x] Sitemap submitted — `/sitemap.xml` processed (6 pages discovered)
+- [x] Sitemap submitted — `/sitemap.xml` processed (initial 6 pages)
 - [x] Canonical URL default — `https://www.omniutil.pro` (`site.ts`, `.env.example`)
+- [x] Vercel production deploy — **v0.8.0** live (JWT, Regex, Whisper) — Jun 30, 2026
+- [x] Vercel build fix — `outputFileTracingExcludes` for ML binaries (`f1f36c7`)
 - [ ] Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` in Vercel env (mirror code default)
+- [ ] Set Vercel Node.js version to **22.x** (matches `package.json` `engines`)
+- [ ] Fix `/sitemap.xml` production 500 error
 - [ ] Production smoke test checklist (see below)
-- [ ] Request indexing for key URLs in GSC (home + 5 tools)
+- [ ] Resubmit sitemap to GSC (11 tools + home = 12 URLs)
+- [ ] Request indexing for key URLs in GSC (home + all tools)
 
-**Pre-launch smoke test:**
-- [ ] Home, all 5 tool pages load
+**Pre-launch smoke test (11 tools):**
+- [ ] Home + all 11 tool pages load
 - [ ] Media Optimizer: compress + download + ZIP
 - [ ] Prompt Architect: build + copy prompt
 - [ ] Data Sanitizer: upload CSV + clean + export
 - [ ] File to PDF: image/Excel → PDF with Auto layout
 - [ ] AI Background Remover: upload → remove bg → download PNG
+- [ ] JSON Formatter: format, minify, error line hints
+- [ ] IMEI Checker: validate IMEI + TAC device lookup
+- [ ] SVG-to-Code: SVGO optimize + React/Tailwind codegen
+- [ ] JWT Debugger: decode + HS256 verify
+- [ ] Regex Builder: live match highlighting + presets
+- [ ] Audio Transcriber: upload audio → Whisper transcribe (first-run model download)
 - [ ] `Ctrl+K` palette works
-- [ ] `/sitemap.xml` and `/robots.txt` accessible
+- [ ] `/robots.txt` accessible
+- [ ] `/sitemap.xml` returns 200 (currently 500 — fix pending)
 - [ ] OG preview valid (share link on Twitter/LinkedIn)
 
 ---
@@ -179,6 +192,8 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 | **8** | **Visual Regex Builder** | Pure JS parser | ✅ Live |
 | **9** | **WASM Local Transcriber** | `@huggingface/transformers` + Whisper | ✅ Live |
 
+> **Elite Pipeline:** All 4 tools (#6–9) shipped and deployed to production (Jun 30, 2026).
+
 **Adding a new tool:**
 1. Add entry to `src/lib/tools.ts` (auto-added to sitemap)
 2. Create `src/app/[slug]/page.tsx` with `ToolLayout` + `buildToolMetadata()`
@@ -188,6 +203,8 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ### 2.2 PWA & Performance
 - [x] Web manifest + app icons (Phase 1.3)
 - [x] Per-tool code splitting — AI Background Remover lazy-loads ONNX model on demand
+- [x] Per-tool code splitting — Audio Transcriber lazy-loads Whisper via dynamic `import()`
+- [x] Vercel serverless trace optimization — `outputFileTracingExcludes` for ML binaries
 - [ ] Service Worker — offline dashboard shell
 - [ ] Lighthouse score 95+ (LCP, CLS, INP)
 - [ ] Per-tool code splitting audit (remaining tools)
@@ -245,6 +262,13 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ---
 
 ## Release History
+
+### v0.8.1 — Vercel Deploy Fix (Jun 30, 2026)
+- Fixed production deploy blocked by 392 MB `audio-transcriber` serverless function (250 MB Vercel limit)
+- `next.config.ts` — `outputFileTracingExcludes` for `onnxruntime-node`, `onnxruntime-web`, `@huggingface/transformers`
+- `vercel.json` — build memory (`NODE_OPTIONS=--max-old-space-size=8192`)
+- `package.json` — pin Node `22.x` via `engines`
+- **All 11 tools live** at [www.omniutil.pro](https://www.omniutil.pro)
 
 ### v0.8.0 — Elite Tools Pipeline Complete (Jun 29, 2026)
 - **JWT Debugger** (`/jwt-debugger`) — color-coded decode, HS256 Web Crypto verify
@@ -350,12 +374,14 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 | High impact, low effort | High impact, high effort |
 |-------------------------|---------------------------|
 | ~~SEO (sitemap, OG)~~ ✅ | ~~AI Background Remover~~ ✅ |
-| ~~Vercel deploy + domain~~ ✅ | Before/after image slider |
-| ~~Google Search Console submit~~ ✅ | Excel support (Data Sanitizer) |
-| ~~Excel support~~ ✅ | i18n (EN + BN) |
-| ~~Data anonymization~~ ✅ | Plugin registry refactor |
+| ~~Vercel deploy + domain~~ ✅ | ~~Before/after image slider~~ ✅ |
+| ~~Google Search Console submit~~ ✅ | ~~Excel support~~ ✅ |
+| ~~Data anonymization~~ ✅ | i18n (EN + BN) |
 | ~~AVIF + ZIP~~ ✅ | Plugin registry refactor |
-| ~~File to PDF~~ ✅ | Smart PDF auto-layout |
+| ~~File to PDF~~ ✅ | ~~Smart PDF auto-layout~~ ✅ |
+| ~~Elite Pipeline (#6–9)~~ ✅ | PDF Merger / Splitter |
+| Fix sitemap 500 ← **now** | QR Code Generator ← **next tool** |
+| GSC resubmit (12 URLs) | Audio Transcriber model CDN cache |
 
 | Low impact, low effort | Low impact, high effort |
 |------------------------|-------------------------|
@@ -368,11 +394,12 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 ## Recommended Next Steps
 
-1. **GSC follow-up** — Resubmit sitemap (now 7 URLs); request indexing for new tools
-2. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
-3. **Phase 2.1** — QR Code Generator ← **next**
-4. **Phase 2.1** — PDF Merger / Splitter
-5. **Production smoke test** — Run checklist for all 6 live tools
+1. **Fix sitemap 500** — `/sitemap.xml` errors in production; debug and redeploy
+2. **Vercel settings** — Node.js **22.x** + `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro`
+3. **GSC follow-up** — Resubmit sitemap (12 URLs: home + 11 tools); request indexing
+4. **Production smoke test** — Run checklist for all 11 live tools
+5. **Phase 2.1** — QR Code Generator ← **next new tool**
+6. **Phase 2.1** — PDF Merger / Splitter
 
 ---
 
@@ -387,13 +414,18 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 | SEO | `sitemap.ts`, `robots.ts`, `manifest.ts`, `next/og` |
 | Image compression | `browser-image-compression` + Canvas (AVIF) |
 | Background removal | `@imgly/background-removal` (ONNX Runtime Web) |
+| Speech-to-text | `@huggingface/transformers` + Whisper tiny (ONNX Runtime Web) |
+| SVG optimization | `svgo` (browser build) |
+| JWT / crypto | Web Crypto API (HS256 verify) |
 | PDF generation | `pdf-lib` + `@pdf-lib/fontkit` + Noto fonts (CDN) |
 | CSV / Excel parsing | `papaparse` + `xlsx` (SheetJS) |
 | ZIP export | `jszip` |
 | Forms | `react-hook-form` |
 | Icons | `lucide-react` |
 | State | React Context + LocalStorage |
-| Hosting | Vercel (Edge) — production live |
+| Hosting | Vercel — production live ([www.omniutil.pro](https://www.omniutil.pro)) |
+| Build | `next build --webpack` (required for ONNX/webpack aliases) |
+| Vercel limits | `outputFileTracingExcludes` — client-only ML deps excluded from serverless traces |
 
 ---
 
@@ -405,6 +437,7 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 4. **Speed** — Sub-second interactions; WASM/workers where needed
 5. **Honest UX** — “Processed locally” on every tool
 6. **SEO by design** — New tools auto-join sitemap via `tools.ts`
+7. **Vercel-aware builds** — Heavy client-only WASM/ONNX deps excluded from serverless traces
 
 ---
 

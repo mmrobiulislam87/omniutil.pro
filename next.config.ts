@@ -24,6 +24,9 @@ const nextConfig: NextConfig = {
       "node_modules/onnxruntime-web/**",
       "node_modules/@huggingface/transformers/**",
     ],
+    "/screen-recorder": [
+      "node_modules/@ffmpeg/**",
+    ],
   },
   webpack: (config) => {
     config.resolve.alias = {

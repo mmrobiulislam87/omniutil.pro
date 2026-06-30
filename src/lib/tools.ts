@@ -10,6 +10,7 @@ import {
   Regex,
   Smartphone,
   Sparkles,
+  Video,
   type LucideIcon,
 } from "lucide-react";
 import type { Metadata } from "next";
@@ -28,6 +29,31 @@ export type Tool = {
 };
 
 export const TOOLS: Tool[] = [
+  {
+    id: "screen-recorder",
+    name: "Screen Recorder",
+    dashboardTitle: "HD Screen Recorder & Trimmer",
+    description:
+      "Record your screen in 1080p with mic and webcam overlay — no extension, no watermark. Trim and download locally with ffmpeg.wasm. Your video never uploads.",
+    href: "/screen-recorder",
+    icon: Video,
+    emoji: "🎬",
+    badge: "Loom Alternative",
+    category: "Media",
+    tags: [
+      "screen recorder",
+      "screen capture",
+      "loom alternative",
+      "video trim",
+      "webcam",
+      "demo",
+      "presentation",
+      "ffmpeg",
+      "wasm",
+      "privacy",
+      "no watermark",
+    ],
+  },
   {
     id: "audio-transcriber",
     name: "Audio Transcriber",
