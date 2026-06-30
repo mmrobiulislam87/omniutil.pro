@@ -4,28 +4,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Camera,
   Circle,
-  Download,
-  Film,
   Mic,
   Monitor,
-  Music,
   Pause,
   Play,
-  RotateCcw,
-  Scissors,
   Settings2,
   Square,
-  Trash2,
   Video,
   Volume2,
   VolumeX,
-  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ToolErrorBanner } from "@/components/ui/ToolStateWrapper";
-import { NudgeButton, VideoTimeline } from "@/components/screen-recorder/VideoTimeline";
+import { ProStudioEditor } from "@/components/screen-recorder/ProStudioEditor";
 import { cn } from "@/lib/cn";
-import { downloadBlob, formatBytes } from "@/lib/format";
 import {
   CAMERA_POSITIONS,
   CAMERA_SIZES,
@@ -44,13 +36,6 @@ import {
   requestScreenWakeLock,
 } from "@/utils/recordingPip";
 import { probeVideoDuration } from "@/utils/videoProbe";
-import {
-  EXPORT_QUALITIES,
-  exportVideo,
-  estimateExportDuration,
-  SPEED_OPTIONS,
-  type ExportQuality,
-} from "@/utils/videoTrimmer";
 
 type Phase = "idle" | "countdown" | "recording" | "preview" | "exporting";
 
@@ -78,22 +63,11 @@ export function ScreenRecorder() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [rawBlob, setRawBlob] = useState<Blob | null>(null);
   const [duration, setDuration] = useState(0);
-  const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [loopSelection, setLoopSelection] = useState(true);
-  const [exportQuality, setExportQuality] = useState<ExportQuality>("balanced");
-  const [exportSpeed, setExportSpeed] = useState(1);
-  const [muteExport, setMuteExport] = useState(false);
-  const [exportStatus, setExportStatus] = useState("");
-  const [exportProgress, setExportProgress] = useState(0);
   const [durationReady, setDurationReady] = useState(false);
   const [recordedDurationSec, setRecordedDurationSec] = useState(0);
 
   const sessionRef = useRef<RecordingSession | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const previewRef = useRef<HTMLVideoElement>(null);
   const wakeLockReleaseRef = useRef<(() => void) | null>(null);
   const stopRecordingRef = useRef<() => Promise<void>>(async () => {});
 
@@ -122,8 +96,6 @@ export function ScreenRecorder() {
       .then((d) => {
         if (cancelled) return;
         setDuration(d);
-        setTrimStart(0);
-        setTrimEnd(d);
         setDurationReady(true);
       })
       .catch(() => {
@@ -132,8 +104,6 @@ export function ScreenRecorder() {
           recordedDurationSec > 0 ? recordedDurationSec : effectiveDuration;
         if (fallback > 0) {
           setDuration(fallback);
-          setTrimStart(0);
-          setTrimEnd(fallback);
         }
         setDurationReady(true);
       });
@@ -205,12 +175,7 @@ export function ScreenRecorder() {
     setVideoUrl(null);
     setRawBlob(null);
     setDuration(0);
-    setTrimStart(0);
-    setTrimEnd(0);
-    setCurrentTime(0);
     setElapsedMs(0);
-    setExportStatus("");
-    setExportProgress(0);
     setIsPaused(false);
     setCountdown(null);
     setDurationReady(false);
@@ -313,8 +278,6 @@ export function ScreenRecorder() {
       setBlobPreview(blob);
       if (recordedSec > 0) {
         setDuration(recordedSec);
-        setTrimStart(0);
-        setTrimEnd(recordedSec);
       }
       setPhase("preview");
       setIsPaused(false);
@@ -326,131 +289,17 @@ export function ScreenRecorder() {
 
   stopRecordingRef.current = stopRecording;
 
-  const onPreviewLoaded = useCallback(() => {
-    const video = previewRef.current;
-    if (!video) return;
-    const d = video.duration;
-    if (Number.isFinite(d) && d > 0 && d !== Infinity) {
-      setDuration(d);
-      setTrimStart(0);
-      setTrimEnd(d);
-      setDurationReady(true);
-    }
-  }, []);
-
-  const onTimeUpdate = useCallback(() => {
-    const video = previewRef.current;
-    if (!video) return;
-    setCurrentTime(video.currentTime);
-    if (loopSelection && video.currentTime >= trimEnd - 0.05) {
-      video.currentTime = trimStart;
-    }
-  }, [loopSelection, trimEnd, trimStart]);
-
-  const seek = useCallback((t: number) => {
-    const video = previewRef.current;
-    if (!video) return;
-    video.currentTime = t;
-    setCurrentTime(t);
-  }, []);
-
-  const togglePlay = useCallback(() => {
-    const video = previewRef.current;
-    if (!video) return;
-    if (video.paused) {
-      if (video.currentTime < trimStart || video.currentTime >= trimEnd) {
-        video.currentTime = trimStart;
-      }
-      void video.play();
-      setIsPlaying(true);
-    } else {
-      video.pause();
-      setIsPlaying(false);
-    }
-  }, [trimStart, trimEnd]);
-
-  const nudge = useCallback(
-    (target: "start" | "end", delta: number) => {
-      if (target === "start") {
-        setTrimStart((s) => Math.max(0, Math.min(s + delta, trimEnd - 0.25)));
-      } else {
-        setTrimEnd((e) =>
-          Math.min(duration, Math.max(e + delta, trimStart + 0.25)),
-        );
-      }
-    },
-    [duration, trimEnd, trimStart],
-  );
-
-  const runExport = useCallback(
-    async (mode: "video" | "audio", download = true) => {
-      if (!rawBlob) return;
-      setPhase("exporting");
-      setError(null);
-      setExportProgress(0);
-      setExportStatus("Preparing export…");
-
-      try {
-        const result = await exportVideo(
-          rawBlob,
-          {
-            startSec: trimStart,
-            endSec: trimEnd > 0 ? trimEnd : effectiveDuration,
-            muteAudio: muteExport,
-            speed: exportSpeed,
-            quality: exportQuality,
-            mode,
-          },
-          (message, ratio) => {
-            setExportStatus(message);
-            if (ratio != null) setExportProgress(ratio);
-          },
-        );
-
-        const ext = mode === "audio" ? "webm" : "webm";
-        const prefix = mode === "audio" ? "omniutil-audio" : "omniutil-export";
-        if (download) {
-          downloadBlob(result, `${prefix}-${Date.now()}.${ext}`);
-          setExportStatus("Download started.");
-        } else {
-          setBlobPreview(result);
-          setExportStatus("Applied to preview.");
-        }
-        setPhase("preview");
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Export failed.");
-        setPhase("preview");
-      }
-    },
-    [
-      rawBlob,
-      trimStart,
-      trimEnd,
-      muteExport,
-      exportSpeed,
-      exportQuality,
-      setBlobPreview,
-    ],
-  );
-
-  const exportDuration = estimateExportDuration(
-    trimStart,
-    trimEnd || effectiveDuration,
-    exportSpeed,
-  );
-
-  const editorReady = durationReady && effectiveDuration > 0;
-
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-gray-300">
         <p className="flex items-center gap-2 font-medium text-red-300">
           <Video className="h-4 w-4" />
-          Pro Studio · MediaRecorder + ffmpeg.wasm
+          Pro Studio Editor · Record + professional edit
         </p>
         <p className="mt-1 text-xs leading-relaxed text-gray-400">
-          Up to 1440p @ 60fps with mic, system audio, and webcam PiP. Controls
-          stay on this page only — nothing floats on screen during capture.
+          Up to 1440p @ 60fps with mic, system audio, and webcam PiP. After
+          recording, split clips, export Shorts/Reels, clean audio, add your
+          brand, and ship with Discord or email size presets — all in-browser.
         </p>
       </div>
 
@@ -665,281 +514,27 @@ export function ScreenRecorder() {
         </div>
       )}
 
-      {(phase === "preview" || phase === "exporting") && videoUrl && (
-        <div className="space-y-5">
-          <div className="relative overflow-hidden rounded-xl border border-gray-800 bg-black">
-            <video
-              ref={previewRef}
-              src={videoUrl}
-              controls
-              playsInline
-              onLoadedMetadata={onPreviewLoaded}
-              onDurationChange={onPreviewLoaded}
-              onTimeUpdate={onTimeUpdate}
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              className="max-h-[min(60vh,480px)] w-full"
-            />
-            {!isPlaying && (
-              <button
-                type="button"
-                onClick={togglePlay}
-                className="absolute inset-0 flex items-center justify-center bg-black/35 transition hover:bg-black/45"
-                aria-label="Play recording"
-              >
-                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-600 shadow-lg shadow-blue-600/40">
-                  <Play className="h-8 w-8 fill-white text-white" />
-                </span>
-              </button>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={togglePlay} disabled={phase === "exporting"}>
-              {isPlaying ? (
-                <Pause className="h-4 w-4" />
-              ) : (
-                <Play className="h-4 w-4" />
-              )}
-              {isPlaying ? "Pause" : "Play"}
-            </Button>
-            {rawBlob && (
-              <p className="text-xs text-gray-500">
-                {formatBytes(rawBlob.size)}
-                {effectiveDuration > 0 &&
-                  ` · ${formatRecordingTime(effectiveDuration * 1000)}`}
-              </p>
-            )}
-          </div>
-
-          {!editorReady && (
-            <p className="text-xs text-gray-500">Loading editor…</p>
-          )}
-
-          {editorReady && (
-            <>
-              <div className="space-y-3 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    <Scissors className="h-3.5 w-3.5" />
-                    Timeline editor
-                  </p>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={togglePlay}
-                      disabled={phase === "exporting"}
-                    >
-                      {isPlaying ? (
-                        <Pause className="h-4 w-4" />
-                      ) : (
-                        <Play className="h-4 w-4" />
-                      )}
-                      Preview
-                    </Button>
-                    <ToggleChip
-                      active={loopSelection}
-                      onClick={() => setLoopSelection((v) => !v)}
-                      icon={RotateCcw}
-                      label="Loop selection"
-                      compact
-                    />
-                  </div>
-                </div>
-
-                <VideoTimeline
-                  duration={effectiveDuration}
-                  start={trimStart}
-                  end={trimEnd || effectiveDuration}
-                  currentTime={currentTime}
-                  disabled={phase === "exporting"}
-                  onStartChange={setTrimStart}
-                  onEndChange={setTrimEnd}
-                  onSeek={seek}
-                />
-
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="mr-1 self-center text-[10px] text-gray-600">
-                    Start
-                  </span>
-                  <NudgeButton
-                    label="-1s"
-                    disabled={phase === "exporting"}
-                    onClick={() => nudge("start", -1)}
-                  />
-                  <NudgeButton
-                    label="-0.1s"
-                    disabled={phase === "exporting"}
-                    onClick={() => nudge("start", -0.1)}
-                  />
-                  <NudgeButton
-                    label="+0.1s"
-                    disabled={phase === "exporting"}
-                    onClick={() => nudge("start", 0.1)}
-                  />
-                  <NudgeButton
-                    label="+1s"
-                    disabled={phase === "exporting"}
-                    onClick={() => nudge("start", 1)}
-                  />
-                  <span className="mx-2 self-center text-gray-700">|</span>
-                  <span className="mr-1 self-center text-[10px] text-gray-600">
-                    End
-                  </span>
-                  <NudgeButton
-                    label="-1s"
-                    disabled={phase === "exporting"}
-                    onClick={() => nudge("end", -1)}
-                  />
-                  <NudgeButton
-                    label="-0.1s"
-                    disabled={phase === "exporting"}
-                    onClick={() => nudge("end", -0.1)}
-                  />
-                  <NudgeButton
-                    label="+0.1s"
-                    disabled={phase === "exporting"}
-                    onClick={() => nudge("end", 0.1)}
-                  />
-                  <NudgeButton
-                    label="+1s"
-                    disabled={phase === "exporting"}
-                    onClick={() => nudge("end", 1)}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-4 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  <Film className="h-3.5 w-3.5" />
-                  Export settings
-                </p>
-
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <label className="space-y-1.5 text-sm">
-                    <span className="text-gray-500">Quality</span>
-                    <select
-                      value={exportQuality}
-                      disabled={phase === "exporting"}
-                      onChange={(e) =>
-                        setExportQuality(e.target.value as ExportQuality)
-                      }
-                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200"
-                    >
-                      {EXPORT_QUALITIES.map((q) => (
-                        <option key={q.id} value={q.id}>
-                          {q.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1.5 text-sm">
-                    <span className="text-gray-500">Speed</span>
-                    <select
-                      value={exportSpeed}
-                      disabled={phase === "exporting"}
-                      onChange={(e) =>
-                        setExportSpeed(Number(e.target.value))
-                      }
-                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200"
-                    >
-                      {SPEED_OPTIONS.map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="flex items-end">
-                    <ToggleChip
-                      active={muteExport}
-                      onClick={() => setMuteExport((v) => !v)}
-                      icon={muteExport ? VolumeX : Volume2}
-                      label="Mute audio"
-                    />
-                  </div>
-                </div>
-
-                <p className="text-xs text-gray-500">
-                  Output length:{" "}
-                  <span className="font-mono text-gray-400">
-                    {formatRecordingTime(exportDuration * 1000, true)}
-                  </span>
-                  {exportSpeed !== 1 && (
-                    <span className="ml-1 text-amber-500/80">
-                      ({exportSpeed}× speed)
-                    </span>
-                  )}
-                </p>
-              </div>
-            </>
-          )}
-
-          {phase === "exporting" && (
-            <div className="space-y-2 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
-              <div className="flex justify-between text-xs text-gray-500">
-                <span>{exportStatus}</span>
-                <span>{exportProgress}%</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-gray-800">
-                <div
-                  className="h-full rounded-full bg-blue-500 transition-all"
-                  style={{ width: `${exportProgress}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() => runExport("video", true)}
-              disabled={phase === "exporting" || !editorReady}
-              className="gap-2"
-            >
-              <Download className="h-4 w-4" />
-              Export video
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => runExport("video", false)}
-              disabled={phase === "exporting" || !editorReady}
-              className="gap-2"
-            >
-              <Zap className="h-4 w-4" />
-              Apply to preview
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => runExport("audio", true)}
-              disabled={phase === "exporting" || duration <= 0 || muteExport}
-              className="gap-2"
-            >
-              <Music className="h-4 w-4" />
-              Extract audio
-            </Button>
-            {rawBlob && (
-              <Button
-                variant="ghost"
-                onClick={() =>
-                  downloadBlob(rawBlob, `omniutil-raw-${Date.now()}.webm`)
-                }
-                disabled={phase === "exporting"}
-              >
-                <Download className="h-4 w-4" />
-                Raw WebM
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              onClick={clearAll}
-              disabled={phase === "exporting"}
-            >
-              <Trash2 className="h-4 w-4" />
-              New recording
-            </Button>
-          </div>
-        </div>
+      {(phase === "preview" || phase === "exporting") && videoUrl && rawBlob && (
+        <ProStudioEditor
+          videoUrl={videoUrl}
+          rawBlob={rawBlob}
+          duration={effectiveDuration}
+          durationReady={durationReady && effectiveDuration > 0}
+          exporting={phase === "exporting"}
+          onExportingChange={(v) => setPhase(v ? "exporting" : "preview")}
+          onError={setError}
+          onApplyPreview={(blob) => {
+            setBlobPreview(blob);
+            setDurationReady(false);
+            probeVideoDuration(blob)
+              .then((d) => {
+                setDuration(d);
+                setDurationReady(true);
+              })
+              .catch(() => setDurationReady(true));
+          }}
+          onNewRecording={clearAll}
+        />
       )}
 
       {error && <ToolErrorBanner message={error} />}

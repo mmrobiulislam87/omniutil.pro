@@ -32,9 +32,9 @@ export const TOOLS: Tool[] = [
   {
     id: "screen-recorder",
     name: "Screen Recorder",
-    dashboardTitle: "HD Screen Recorder & Trimmer",
+    dashboardTitle: "ProStudio Screen Recorder",
     description:
-      "Record screen in up to 1440p @ 60fps with mic, system audio, and webcam PiP. Pause, visual timeline trim, speed control, and ffmpeg export — no watermark, no uploads.",
+      "Record up to 1440p @ 60fps, then edit in ProStudio — multi-clip cut, 9:16 Shorts export, audio clean, watermark, and smart presets for Discord & email. 100% in-browser.",
     href: "/screen-recorder",
     icon: Video,
     emoji: "🎬",
