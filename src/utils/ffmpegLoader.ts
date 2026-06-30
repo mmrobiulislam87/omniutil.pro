@@ -10,6 +10,13 @@ export type FfmpegBundle = {
   fetchFile: (data: any) => Promise<Uint8Array>;
 };
 
+type CoreSource = {
+  label: string;
+  base: string;
+  /** Same-origin UMD can load directly; CDN needs toBlobURL for CORS. */
+  useBlob: boolean;
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let ffmpegPromise: Promise<FfmpegBundle> | null = null;
 let lastFfmpegLog = "";
@@ -22,14 +29,17 @@ export function getLastFfmpegLog(): string {
   return lastFfmpegLog;
 }
 
-function coreSources(): string[] {
-  const sources: string[] = [];
+function coreSources(): CoreSource[] {
+  const cdn = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/umd`;
+  const sources: CoreSource[] = [];
   if (typeof window !== "undefined") {
-    sources.push(`${window.location.origin}/ffmpeg`);
+    sources.push({
+      label: window.location.origin,
+      base: `${window.location.origin}/ffmpeg`,
+      useBlob: false,
+    });
   }
-  sources.push(
-    `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`,
-  );
+  sources.push({ label: "cdn", base: cdn, useBlob: true });
   return sources;
 }
 
@@ -62,11 +72,31 @@ function withTimeout<T>(
   });
 }
 
-async function tryLoadFromBase(
+async function resolveCoreUrls(
   base: string,
+  useBlob: boolean,
+  onProgress?: FfmpegProgressCallback,
+): Promise<{ coreURL: string; wasmURL: string }> {
+  const js = `${base}/ffmpeg-core.js`;
+  const wasm = `${base}/ffmpeg-core.wasm`;
+
+  if (!useBlob) {
+    return { coreURL: js, wasmURL: wasm };
+  }
+
+  onProgress?.("Downloading video engine (~30 MB first time)…", 14);
+  const { toBlobURL } = await import("@ffmpeg/util");
+  return {
+    coreURL: await toBlobURL(js, "text/javascript"),
+    wasmURL: await toBlobURL(wasm, "application/wasm"),
+  };
+}
+
+async function tryLoadFromSource(
+  source: CoreSource,
   onProgress?: FfmpegProgressCallback,
 ): Promise<FfmpegBundle> {
-  onProgress?.("Downloading video engine (~30 MB first time)…", 12);
+  onProgress?.("Initializing ProStudio engine…", 10);
 
   const { FFmpeg } = await import("@ffmpeg/ffmpeg");
   const { fetchFile } = await import("@ffmpeg/util");
@@ -79,13 +109,14 @@ async function tryLoadFromBase(
     onProgress?.("Rendering…", Math.min(99, Math.round(progress * 100)));
   });
 
-  // Do NOT set classWorkerURL — the copied public worker breaks (missing ./const.js).
-  // Webpack bundles @ffmpeg/ffmpeg's worker.js correctly from the app chunk.
+  const { coreURL, wasmURL } = await resolveCoreUrls(
+    source.base,
+    source.useBlob,
+    onProgress,
+  );
+
   await withTimeout(
-    ffmpeg.load({
-      coreURL: `${base}/ffmpeg-core.js`,
-      wasmURL: `${base}/ffmpeg-core.wasm`,
-    }),
+    ffmpeg.load({ coreURL, wasmURL }),
     LOAD_TIMEOUT_MS,
     "Video engine load timed out. Check connection and try again.",
   );
@@ -95,7 +126,8 @@ async function tryLoadFromBase(
 }
 
 /**
- * Load ffmpeg.wasm using same-origin static files (no blob URLs).
+ * Load ffmpeg.wasm (UMD core via importScripts in the bundled worker).
+ * ESM core URLs fail with "Cannot find module" — no default export.
  */
 export async function loadFfmpegEngine(
   onProgress?: FfmpegProgressCallback,
@@ -105,19 +137,19 @@ export async function loadFfmpegEngine(
       onProgress?.("Loading ProStudio engine…", 5);
       const errors: string[] = [];
 
-      for (const base of coreSources()) {
+      for (const source of coreSources()) {
         try {
-          if (base.startsWith(window.location.origin)) {
-            const ok = await probeCore(base);
+          if (!source.useBlob) {
+            const ok = await probeCore(source.base);
             if (!ok) {
-              errors.push(`${base}: files not found (404)`);
+              errors.push(`${source.label}: files not found (404)`);
               continue;
             }
           }
-          return await tryLoadFromBase(base, onProgress);
+          return await tryLoadFromSource(source, onProgress);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`${base}: ${msg}`);
+          errors.push(`${source.label}: ${msg}`);
         }
       }
 
