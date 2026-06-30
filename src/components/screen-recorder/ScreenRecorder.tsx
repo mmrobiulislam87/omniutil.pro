@@ -41,10 +41,9 @@ import {
   type RecordingSession,
 } from "@/utils/screenRecorder";
 import {
-  openRecordingPip,
   requestScreenWakeLock,
-  type PipController,
 } from "@/utils/recordingPip";
+import { probeVideoDuration } from "@/utils/videoProbe";
 import {
   EXPORT_QUALITIES,
   exportVideo,
@@ -89,13 +88,17 @@ export function ScreenRecorder() {
   const [muteExport, setMuteExport] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
   const [exportProgress, setExportProgress] = useState(0);
+  const [durationReady, setDurationReady] = useState(false);
+  const [recordedDurationSec, setRecordedDurationSec] = useState(0);
 
   const sessionRef = useRef<RecordingSession | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewRef = useRef<HTMLVideoElement>(null);
-  const pipRef = useRef<PipController | null>(null);
   const wakeLockReleaseRef = useRef<(() => void) | null>(null);
   const stopRecordingRef = useRef<() => Promise<void>>(async () => {});
+
+  const effectiveDuration =
+    duration > 0 ? duration : recordedDurationSec;
 
   const revokeVideoUrl = useCallback((url: string | null) => {
     if (url) URL.revokeObjectURL(url);
@@ -104,11 +107,41 @@ export function ScreenRecorder() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      pipRef.current?.close();
       wakeLockReleaseRef.current?.();
       revokeVideoUrl(videoUrl);
     };
   }, [videoUrl, revokeVideoUrl]);
+
+  useEffect(() => {
+    if (phase !== "preview" || !rawBlob) return;
+
+    let cancelled = false;
+    setDurationReady(false);
+
+    probeVideoDuration(rawBlob)
+      .then((d) => {
+        if (cancelled) return;
+        setDuration(d);
+        setTrimStart(0);
+        setTrimEnd(d);
+        setDurationReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const fallback =
+          recordedDurationSec > 0 ? recordedDurationSec : effectiveDuration;
+        if (fallback > 0) {
+          setDuration(fallback);
+          setTrimStart(0);
+          setTrimEnd(fallback);
+        }
+        setDurationReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, rawBlob, recordedDurationSec]);
 
   useEffect(() => {
     if (phase !== "recording") return;
@@ -123,6 +156,32 @@ export function ScreenRecorder() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [phase]);
 
+  useEffect(() => {
+    if (phase !== "recording") return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (!sessionRef.current) return;
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void stopRecordingRef.current();
+      }
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        const session = sessionRef.current;
+        if (session.isPaused()) {
+          session.resume();
+          setIsPaused(false);
+        } else {
+          session.pause();
+          setIsPaused(true);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [phase]);
+
   const setBlobPreview = useCallback(
     (blob: Blob) => {
       revokeVideoUrl(videoUrl);
@@ -134,8 +193,6 @@ export function ScreenRecorder() {
   );
 
   const cleanupRecordingExtras = useCallback(() => {
-    pipRef.current?.close();
-    pipRef.current = null;
     wakeLockReleaseRef.current?.();
     wakeLockReleaseRef.current = null;
   }, []);
@@ -156,6 +213,8 @@ export function ScreenRecorder() {
     setExportProgress(0);
     setIsPaused(false);
     setCountdown(null);
+    setDurationReady(false);
+    setRecordedDurationSec(0);
     setError(null);
     setPhase("idle");
   }, [videoUrl, revokeVideoUrl, cleanupRecordingExtras]);
@@ -205,28 +264,12 @@ export function ScreenRecorder() {
       const releaseWake = await requestScreenWakeLock();
       wakeLockReleaseRef.current = releaseWake;
 
-      pipRef.current = await openRecordingPip({
-        onStop: () => void stopRecordingRef.current(),
-        onPause: () => {
-          session.pause();
-          setIsPaused(true);
-        },
-        onResume: () => {
-          session.resume();
-          setIsPaused(false);
-        },
-        isPaused: () => session.isPaused(),
-      });
-
       timerRef.current = setInterval(() => {
         if (!sessionRef.current) return;
         const ms = sessionRef.current.getElapsedMs();
         const paused = sessionRef.current.isPaused();
         setElapsedMs(ms);
-        pipRef.current?.updateTimer(
-          formatRecordingTime(ms, true),
-          paused,
-        );
+        setIsPaused(paused);
       }, 100);
     } catch (err) {
       cleanupRecordingExtras();
@@ -263,9 +306,16 @@ export function ScreenRecorder() {
     cleanupRecordingExtras();
 
     try {
+      const recordedSec = session.getElapsedMs() / 1000;
+      setRecordedDurationSec(recordedSec);
       const blob = await session.stop();
       sessionRef.current = null;
       setBlobPreview(blob);
+      if (recordedSec > 0) {
+        setDuration(recordedSec);
+        setTrimStart(0);
+        setTrimEnd(recordedSec);
+      }
       setPhase("preview");
       setIsPaused(false);
     } catch (err) {
@@ -278,12 +328,14 @@ export function ScreenRecorder() {
 
   const onPreviewLoaded = useCallback(() => {
     const video = previewRef.current;
-    if (!video || !Number.isFinite(video.duration)) return;
+    if (!video) return;
     const d = video.duration;
-    setDuration(d);
-    setTrimStart(0);
-    setTrimEnd(d);
-    setCurrentTime(0);
+    if (Number.isFinite(d) && d > 0 && d !== Infinity) {
+      setDuration(d);
+      setTrimStart(0);
+      setTrimEnd(d);
+      setDurationReady(true);
+    }
   }, []);
 
   const onTimeUpdate = useCallback(() => {
@@ -343,7 +395,7 @@ export function ScreenRecorder() {
           rawBlob,
           {
             startSec: trimStart,
-            endSec: trimEnd,
+            endSec: trimEnd > 0 ? trimEnd : effectiveDuration,
             muteAudio: muteExport,
             speed: exportSpeed,
             quality: exportQuality,
@@ -383,9 +435,11 @@ export function ScreenRecorder() {
 
   const exportDuration = estimateExportDuration(
     trimStart,
-    trimEnd,
+    trimEnd || effectiveDuration,
     exportSpeed,
   );
+
+  const editorReady = durationReady && effectiveDuration > 0;
 
   return (
     <div className="space-y-6">
@@ -395,9 +449,8 @@ export function ScreenRecorder() {
           Pro Studio · MediaRecorder + ffmpeg.wasm
         </p>
         <p className="mt-1 text-xs leading-relaxed text-gray-400">
-          Up to 1440p @ 60fps with mic, system audio, and webcam PiP. Switch
-          tabs freely when sharing Entire Screen or a target tab — a floating
-          control window keeps recording alive.
+          Up to 1440p @ 60fps with mic, system audio, and webcam PiP. Controls
+          stay on this page only — nothing floats on screen during capture.
         </p>
       </div>
 
@@ -588,8 +641,11 @@ export function ScreenRecorder() {
           </div>
 
           <p className="text-xs text-gray-500">
-            Switch tabs freely if you shared Entire Screen or another tab. Keep
-            this page and the floating control window open.
+            Switch tabs if you shared Entire Screen or another tab. Stop via{" "}
+            <kbd className="rounded border border-gray-700 px-1 text-[10px]">
+              Ctrl+Shift+S
+            </kbd>{" "}
+            or Chrome&apos;s &quot;Stop sharing&quot; bar.
           </p>
 
           <div className="flex flex-wrap gap-2">
@@ -611,28 +667,56 @@ export function ScreenRecorder() {
 
       {(phase === "preview" || phase === "exporting") && videoUrl && (
         <div className="space-y-5">
-          <div className="overflow-hidden rounded-xl border border-gray-800 bg-black">
+          <div className="relative overflow-hidden rounded-xl border border-gray-800 bg-black">
             <video
               ref={previewRef}
               src={videoUrl}
+              controls
               playsInline
               onLoadedMetadata={onPreviewLoaded}
+              onDurationChange={onPreviewLoaded}
               onTimeUpdate={onTimeUpdate}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
               className="max-h-[min(60vh,480px)] w-full"
             />
+            {!isPlaying && (
+              <button
+                type="button"
+                onClick={togglePlay}
+                className="absolute inset-0 flex items-center justify-center bg-black/35 transition hover:bg-black/45"
+                aria-label="Play recording"
+              >
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-600 shadow-lg shadow-blue-600/40">
+                  <Play className="h-8 w-8 fill-white text-white" />
+                </span>
+              </button>
+            )}
           </div>
 
-          {rawBlob && (
-            <p className="text-xs text-gray-500">
-              {formatBytes(rawBlob.size)}
-              {duration > 0 &&
-                ` · ${formatRecordingTime(duration * 1000)} total`}
-            </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={togglePlay} disabled={phase === "exporting"}>
+              {isPlaying ? (
+                <Pause className="h-4 w-4" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              {isPlaying ? "Pause" : "Play"}
+            </Button>
+            {rawBlob && (
+              <p className="text-xs text-gray-500">
+                {formatBytes(rawBlob.size)}
+                {effectiveDuration > 0 &&
+                  ` · ${formatRecordingTime(effectiveDuration * 1000)}`}
+              </p>
+            )}
+          </div>
+
+          {!editorReady && (
+            <p className="text-xs text-gray-500">Loading editor…</p>
           )}
 
-          {duration > 0 && (
+          {editorReady && (
             <>
               <div className="space-y-3 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -665,9 +749,9 @@ export function ScreenRecorder() {
                 </div>
 
                 <VideoTimeline
-                  duration={duration}
+                  duration={effectiveDuration}
                   start={trimStart}
-                  end={trimEnd}
+                  end={trimEnd || effectiveDuration}
                   currentTime={currentTime}
                   disabled={phase === "exporting"}
                   onStartChange={setTrimStart}
@@ -810,7 +894,7 @@ export function ScreenRecorder() {
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => runExport("video", true)}
-              disabled={phase === "exporting" || duration <= 0}
+              disabled={phase === "exporting" || !editorReady}
               className="gap-2"
             >
               <Download className="h-4 w-4" />
@@ -819,7 +903,7 @@ export function ScreenRecorder() {
             <Button
               variant="secondary"
               onClick={() => runExport("video", false)}
-              disabled={phase === "exporting" || duration <= 0}
+              disabled={phase === "exporting" || !editorReady}
               className="gap-2"
             >
               <Zap className="h-4 w-4" />

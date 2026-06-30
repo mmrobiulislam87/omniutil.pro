@@ -1,3 +1,5 @@
+import { trimVideoInBrowser } from "@/utils/videoProbe";
+
 const FFMPEG_CORE_VERSION = "0.12.10";
 
 export type ExportQuality = "high" | "balanced" | "compact";
@@ -70,7 +72,7 @@ function toBlob(data: Uint8Array | string, mime: string): Blob {
   if (typeof data === "string") {
     return new Blob([data], { type: mime });
   }
-  return new Blob([data.buffer as ArrayBuffer], { type: mime });
+  return new Blob([new Uint8Array(data)], { type: mime });
 }
 
 export async function exportVideo(
@@ -123,12 +125,7 @@ export async function exportVideo(
     else args.push("-c:a", "libopus", "-b:a", "128k");
     args.push(outputName);
   } else if (muteAudio) {
-    args.push(
-      "-c:v",
-      "copy",
-      "-an",
-      outputName,
-    );
+    args.push("-c:v", "libvpx-vp9", "-b:v", QUALITY_BITRATE[quality], "-an", outputName);
   } else {
     args.push("-c", "copy", outputName);
   }
@@ -157,7 +154,14 @@ export async function exportVideo(
   }
 
   if (exitCode !== 0) {
-    throw new Error("Video export failed.");
+    await ffmpeg.deleteFile(inputName).catch(() => undefined);
+    await ffmpeg.deleteFile(outputName).catch(() => undefined);
+
+    if (mode === "video" && speed === 1 && !muteAudio) {
+      onProgress?.("ffmpeg unavailable — trimming in browser…", 10);
+      return trimVideoInBrowser(blob, startSec, endSec, onProgress);
+    }
+    throw new Error("Video export failed. Try a shorter clip or use Raw WebM.");
   }
 
   const data = await ffmpeg.readFile(outputName);

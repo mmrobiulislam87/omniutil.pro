@@ -329,5 +329,5 @@ export const CAPTURE_GUIDE = [
   "To record YouTube or other sites: choose Entire Screen or Window — not this recorder tab.",
   "Or open the target site in another tab first, then share that specific tab.",
   "Do not navigate away from this page in the same tab — it stops the recorder.",
-  "A floating control window opens while recording — keep it open.",
+  "While recording elsewhere, use Chrome's Stop sharing bar or return here to pause/stop.",
 ] as const;
