@@ -16,16 +16,22 @@ import {
   Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EditorToolbar } from "@/components/screen-recorder/EditorToolbar";
 import { SegmentTimeline } from "@/components/screen-recorder/SegmentTimeline";
 import { cn } from "@/lib/cn";
 import { downloadBlob, formatBytes } from "@/lib/format";
 import { formatRecordingTime } from "@/utils/screenRecorder";
+import { useSegmentHistory } from "@/hooks/useSegmentHistory";
 import {
+  canMergeWithNext,
   createInitialSegments,
   deleteSegment,
   findSegmentAt,
+  mergeWithNext,
   segmentsDuration,
   splitSegmentAt,
+  trimSegmentEnd,
+  trimSegmentStart,
   type TimelineSegment,
 } from "@/utils/editorSegments";
 import {
@@ -88,10 +94,23 @@ export function ProStudioEditor({
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const [tab, setTab] = useState<EditorTab>("cut");
-  const [segments, setSegments] = useState<TimelineSegment[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const {
+    segments,
+    selectedId,
+    setSelectedId,
+    reset: resetHistory,
+    apply,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    beginGesture,
+    endGesture,
+  } = useSegmentHistory();
+
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [timelineZoom, setTimelineZoom] = useState(1);
 
   const [aspectMode, setAspectMode] = useState<AspectMode>("landscape");
   const [cleanAudio, setCleanAudio] = useState(false);
@@ -113,11 +132,9 @@ export function ProStudioEditor({
 
   useEffect(() => {
     if (!durationReady || duration <= 0) return;
-    const initial = createInitialSegments(duration);
-    setSegments(initial);
-    setSelectedId(initial[0]?.id ?? null);
+    resetHistory(createInitialSegments(duration));
     setCurrentTime(0);
-  }, [duration, durationReady]);
+  }, [duration, durationReady, resetHistory]);
 
   const seek = useCallback((t: number) => {
     const video = videoRef.current;
@@ -174,26 +191,132 @@ export function ProStudioEditor({
     }
   }, [currentTime, segments]);
 
+  const selected = segments.find((s) => s.id === selectedId);
+  const canSplit =
+    !!selected &&
+    currentTime > selected.start + 0.25 &&
+    currentTime < selected.end - 0.25;
+  const canDelete = segments.length > 1 && !!selectedId;
+  const canMerge = !!selectedId && canMergeWithNext(segments, selectedId);
+
   const handleSplit = useCallback(() => {
-    setSegments((prev) => {
-      const next = splitSegmentAt(prev, currentTime);
-      if (next === prev) return prev;
-      const newSeg = next.find(
-        (s) => s.start <= currentTime && s.end >= currentTime,
-      );
-      if (newSeg) setSelectedId(newSeg.id);
-      return next;
-    });
-  }, [currentTime]);
+    const next = splitSegmentAt(segments, currentTime);
+    if (next === segments) return;
+    const newSeg = next.find(
+      (s) => s.start <= currentTime && s.end >= currentTime,
+    );
+    apply(next, newSeg?.id ?? selectedId);
+  }, [segments, currentTime, selectedId, apply]);
 
   const handleDelete = useCallback(() => {
     if (!selectedId) return;
-    setSegments((prev) => {
-      const next = deleteSegment(prev, selectedId);
-      setSelectedId(next[0]?.id ?? null);
-      return next;
-    });
-  }, [selectedId]);
+    const next = deleteSegment(segments, selectedId);
+    if (next === segments) return;
+    apply(next, next[0]?.id ?? null);
+  }, [segments, selectedId, apply]);
+
+  const handleMerge = useCallback(() => {
+    if (!selectedId) return;
+    const next = mergeWithNext(segments, selectedId);
+    if (next === segments) return;
+    apply(next, selectedId);
+  }, [segments, selectedId, apply]);
+
+  const handleTrimStart = useCallback(
+    (id: string, time: number) => {
+      const next = trimSegmentStart(segments, id, time);
+      if (next !== segments) apply(next, id, { record: false });
+    },
+    [segments, apply],
+  );
+
+  const handleTrimEnd = useCallback(
+    (id: string, time: number) => {
+      const next = trimSegmentEnd(segments, id, time, 0.25, duration);
+      if (next !== segments) apply(next, id, { record: false });
+    },
+    [segments, duration, apply],
+  );
+
+  const commitTrim = useCallback(() => {
+    endGesture();
+  }, [endGesture]);
+
+  const handleSkip = useCallback(
+    (delta: number) => {
+      if (delta === -Infinity) {
+        const seg = selected ?? segments[0];
+        if (seg) seek(seg.start);
+        return;
+      }
+      seek(Math.max(0, Math.min(duration, currentTime + delta)));
+    },
+    [currentTime, duration, seek, selected, segments],
+  );
+
+  const handleSplitRef = useRef(handleSplit);
+  const handleDeleteRef = useRef(handleDelete);
+  const undoRef = useRef(undo);
+  const redoRef = useRef(redo);
+  const togglePlayRef = useRef(togglePlay);
+  handleSplitRef.current = handleSplit;
+  handleDeleteRef.current = handleDelete;
+  undoRef.current = undo;
+  redoRef.current = redo;
+  togglePlayRef.current = togglePlay;
+
+  useEffect(() => {
+    if (exporting) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        togglePlayRef.current();
+        return;
+      }
+      if (e.ctrlKey && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoRef.current();
+        return;
+      }
+      if (
+        (e.ctrlKey && e.key.toLowerCase() === "y") ||
+        (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "z")
+      ) {
+        e.preventDefault();
+        redoRef.current();
+        return;
+      }
+      if (e.key.toLowerCase() === "s" && !e.ctrlKey) {
+        e.preventDefault();
+        handleSplitRef.current();
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        handleDeleteRef.current();
+        return;
+      }
+      if (e.key.toLowerCase() === "m" && !e.ctrlKey) {
+        e.preventDefault();
+        handleMerge();
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        handleSkip(e.shiftKey ? -1 : -0.1);
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        handleSkip(e.shiftKey ? 1 : 0.1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [exporting, handleMerge, handleSkip]);
 
   const buildWatermark = useCallback(async () => {
     if (watermarkMode === "none") return undefined;
@@ -314,6 +437,25 @@ export function ProStudioEditor({
         </Button>
       </div>
 
+      {durationReady && (
+        <EditorToolbar
+          disabled={exporting}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          canSplit={canSplit}
+          canDelete={canDelete}
+          canMerge={canMerge}
+          zoom={timelineZoom}
+          onUndo={undo}
+          onRedo={redo}
+          onSplit={handleSplit}
+          onDelete={handleDelete}
+          onMerge={handleMerge}
+          onSkip={handleSkip}
+          onZoomChange={setTimelineZoom}
+        />
+      )}
+
       <div className="grid lg:grid-cols-[1fr_300px]">
         {/* Preview + transport */}
         <div className="border-b border-gray-800/60 lg:border-b-0 lg:border-r">
@@ -387,11 +529,14 @@ export function ProStudioEditor({
                 segments={segments}
                 selectedId={selectedId}
                 currentTime={currentTime}
+                zoom={timelineZoom}
                 disabled={exporting}
                 onSelect={setSelectedId}
                 onSeek={seek}
-                onSplit={handleSplit}
-                onDelete={handleDelete}
+                onTrimStart={handleTrimStart}
+                onTrimEnd={handleTrimEnd}
+                onTrimDragStart={beginGesture}
+                onTrimComplete={commitTrim}
               />
             </div>
           )}
@@ -422,10 +567,41 @@ export function ProStudioEditor({
             {tab === "cut" && (
               <div className="space-y-3 text-gray-400">
                 <p className="text-xs leading-relaxed">
-                  Move the playhead and tap{" "}
-                  <span className="text-gray-200">Split</span> to cut clips.
-                  Delete unwanted segments — only green clips export.
+                  Professional cut workflow: split at playhead, drag clip edges to
+                  trim, delete gaps, merge adjacent clips. Only green regions
+                  export.
                 </p>
+                <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3 space-y-2">
+                  <p className="text-[10px] uppercase tracking-wider text-gray-500">
+                    Keyboard shortcuts
+                  </p>
+                  <ul className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-gray-500">
+                    <li>
+                      <kbd className="text-gray-400">Space</kbd> Play / Pause
+                    </li>
+                    <li>
+                      <kbd className="text-gray-400">S</kbd> Split
+                    </li>
+                    <li>
+                      <kbd className="text-gray-400">Del</kbd> Delete clip
+                    </li>
+                    <li>
+                      <kbd className="text-gray-400">M</kbd> Merge next
+                    </li>
+                    <li>
+                      <kbd className="text-gray-400">Ctrl+Z</kbd> Undo
+                    </li>
+                    <li>
+                      <kbd className="text-gray-400">Ctrl+Y</kbd> Redo
+                    </li>
+                    <li>
+                      <kbd className="text-gray-400">← →</kbd> ±0.1s
+                    </li>
+                    <li>
+                      <kbd className="text-gray-400">Shift+←→</kbd> ±1s
+                    </li>
+                  </ul>
+                </div>
                 <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3">
                   <p className="text-[10px] uppercase tracking-wider text-gray-500">
                     Kept duration
