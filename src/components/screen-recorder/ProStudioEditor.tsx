@@ -3,17 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AudioLines,
+  Crop,
   Download,
   ImagePlus,
   Monitor,
   Scissors,
   Pause,
   Play,
+  RotateCw,
   Smartphone,
   Sparkles,
   Trash2,
   Type,
+  Wand2,
   Zap,
+  Music,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EditorToolbar } from "@/components/screen-recorder/EditorToolbar";
@@ -38,9 +42,13 @@ import {
   EXPORT_PRESETS,
   renderStudioExport,
   type AspectMode,
+  type CropMode,
+  type ExportMode,
   type ExportPreset,
+  type VideoRotation,
 } from "@/utils/proStudioExport";
 import { resetFfmpegLoader } from "@/utils/ffmpegLoader";
+import { getPreviewTransformStyle } from "@/utils/studioFilters";
 import { SPEED_OPTIONS } from "@/utils/videoTrimmer";
 import {
   fileToBytes,
@@ -48,7 +56,14 @@ import {
   type WatermarkPosition,
 } from "@/utils/watermarkCanvas";
 
-type EditorTab = "cut" | "social" | "audio" | "brand" | "export";
+type EditorTab =
+  | "cut"
+  | "transform"
+  | "effects"
+  | "social"
+  | "audio"
+  | "brand"
+  | "export";
 
 type ProStudioEditorProps = {
   videoUrl: string;
@@ -64,6 +79,8 @@ type ProStudioEditorProps = {
 
 const TABS: { id: EditorTab; label: string; icon: typeof Scissors }[] = [
   { id: "cut", label: "Cut", icon: Scissors },
+  { id: "transform", label: "Transform", icon: Crop },
+  { id: "effects", label: "Effects", icon: Wand2 },
   { id: "social", label: "Social", icon: Smartphone },
   { id: "audio", label: "Audio", icon: AudioLines },
   { id: "brand", label: "Brand", icon: ImagePlus },
@@ -92,6 +109,7 @@ export function ProStudioEditor({
 }: ProStudioEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
+  const stickerInputRef = useRef<HTMLInputElement>(null);
 
   const [tab, setTab] = useState<EditorTab>("cut");
   const {
@@ -113,6 +131,11 @@ export function ProStudioEditor({
   const [timelineZoom, setTimelineZoom] = useState(1);
 
   const [aspectMode, setAspectMode] = useState<AspectMode>("landscape");
+  const [rotation, setRotation] = useState<VideoRotation>(0);
+  const [crop, setCrop] = useState<CropMode>("none");
+  const [flipH, setFlipH] = useState(false);
+  const [fadeIn, setFadeIn] = useState(0);
+  const [fadeOut, setFadeOut] = useState(0);
   const [cleanAudio, setCleanAudio] = useState(false);
   const [voiceBoost, setVoiceBoost] = useState(false);
   const [exportSpeed, setExportSpeed] = useState(1);
@@ -126,6 +149,12 @@ export function ProStudioEditor({
     useState<WatermarkPosition>("bottom-right");
   const [watermarkOpacity, setWatermarkOpacity] = useState(0.85);
   const [logoFile, setLogoFile] = useState<File | null>(null);
+
+  const [stickerFile, setStickerFile] = useState<File | null>(null);
+  const [stickerPosition, setStickerPosition] =
+    useState<WatermarkPosition>("top-left");
+  const [stickerOpacity, setStickerOpacity] = useState(0.9);
+  const [stickerScale, setStickerScale] = useState(0.25);
 
   const [exportStatus, setExportStatus] = useState("");
   const [exportProgress, setExportProgress] = useState(0);
@@ -342,16 +371,33 @@ export function ProStudioEditor({
     return undefined;
   }, [logoFile, watermarkMode, watermarkOpacity, watermarkPosition, watermarkText]);
 
+  const buildSticker = useCallback(async () => {
+    if (!stickerFile) return undefined;
+    return {
+      pngBytes: await fileToBytes(stickerFile),
+      position: stickerPosition,
+      opacity: stickerOpacity,
+      scale: stickerScale,
+    };
+  }, [stickerFile, stickerOpacity, stickerPosition, stickerScale]);
+
   const runExport = useCallback(
-    async (download: boolean) => {
+    async (download: boolean, exportMode: ExportMode = "video") => {
       if (!rawBlob || segments.length === 0) return;
       onExportingChange(true);
       onError(null);
       setExportProgress(0);
-      setExportStatus("Initializing ProStudio export…");
+      setExportStatus(
+        exportMode === "audio"
+          ? "Extracting audio…"
+          : "Initializing ProStudio export…",
+      );
 
       try {
-        const watermark = await buildWatermark();
+        const [watermark, sticker] = await Promise.all([
+          buildWatermark(),
+          buildSticker(),
+        ]);
         const result = await renderStudioExport(
           rawBlob,
           {
@@ -361,7 +407,14 @@ export function ProStudioEditor({
             voiceBoost,
             speed: exportSpeed,
             preset: exportPreset,
+            exportMode,
+            rotation,
+            crop,
+            flipH,
+            fadeIn,
+            fadeOut,
             watermark,
+            sticker,
           },
           (message, ratio) => {
             setExportStatus(message);
@@ -371,10 +424,20 @@ export function ProStudioEditor({
 
         if (download) {
           const suffix =
-            aspectMode === "shorts" ? "shorts" : exportPreset;
+            exportMode === "audio"
+              ? "audio"
+              : aspectMode === "shorts"
+                ? "shorts"
+                : exportPreset;
           downloadBlob(result, `omniutil-${suffix}-${Date.now()}.webm`);
-          setExportStatus("Download started.");
+          setExportStatus(
+            exportMode === "audio" ? "Audio download started." : "Download started.",
+          );
         } else {
+          if (exportMode === "audio") {
+            onError("Audio extract is download-only. Use Export audio.");
+            return;
+          }
           onApplyPreview(result);
           setExportStatus("Applied to preview.");
         }
@@ -395,11 +458,17 @@ export function ProStudioEditor({
       rawBlob,
       segments,
       aspectMode,
+      rotation,
+      crop,
+      flipH,
+      fadeIn,
+      fadeOut,
       cleanAudio,
       voiceBoost,
       exportSpeed,
       exportPreset,
       buildWatermark,
+      buildSticker,
       onApplyPreview,
       onError,
       onExportingChange,
@@ -408,6 +477,7 @@ export function ProStudioEditor({
 
   const keptDuration = segmentsDuration(segments);
   const outputDuration = keptDuration / exportSpeed;
+  const previewStyle = getPreviewTransformStyle(rotation, crop, flipH);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-800/90 bg-[#070a12] shadow-2xl shadow-black/40">
@@ -437,25 +507,6 @@ export function ProStudioEditor({
         </Button>
       </div>
 
-      {durationReady && (
-        <EditorToolbar
-          disabled={exporting}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          canSplit={canSplit}
-          canDelete={canDelete}
-          canMerge={canMerge}
-          zoom={timelineZoom}
-          onUndo={undo}
-          onRedo={redo}
-          onSplit={handleSplit}
-          onDelete={handleDelete}
-          onMerge={handleMerge}
-          onSkip={handleSkip}
-          onZoomChange={setTimelineZoom}
-        />
-      )}
-
       <div className="grid lg:grid-cols-[1fr_300px]">
         {/* Preview + transport */}
         <div className="border-b border-gray-800/60 lg:border-b-0 lg:border-r">
@@ -472,8 +523,9 @@ export function ProStudioEditor({
               onTimeUpdate={onTimeUpdate}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
+              style={previewStyle}
               className={cn(
-                "max-h-[min(52vh,520px)] w-full object-contain",
+                "max-h-[min(52vh,520px)] w-full object-contain transition-transform duration-300",
                 aspectMode === "shorts" && "max-w-[min(100%,280px)]",
               )}
             />
@@ -523,21 +575,39 @@ export function ProStudioEditor({
           </div>
 
           {durationReady && (
-            <div className="border-t border-gray-800/60 px-4 py-4">
-              <SegmentTimeline
-                duration={duration}
-                segments={segments}
-                selectedId={selectedId}
-                currentTime={currentTime}
-                zoom={timelineZoom}
+            <div className="border-t border-gray-800/60">
+              <EditorToolbar
                 disabled={exporting}
-                onSelect={setSelectedId}
-                onSeek={seek}
-                onTrimStart={handleTrimStart}
-                onTrimEnd={handleTrimEnd}
-                onTrimDragStart={beginGesture}
-                onTrimComplete={commitTrim}
+                canUndo={canUndo}
+                canRedo={canRedo}
+                canSplit={canSplit}
+                canDelete={canDelete}
+                canMerge={canMerge}
+                zoom={timelineZoom}
+                onUndo={undo}
+                onRedo={redo}
+                onSplit={handleSplit}
+                onDelete={handleDelete}
+                onMerge={handleMerge}
+                onSkip={handleSkip}
+                onZoomChange={setTimelineZoom}
               />
+              <div className="px-4 py-4">
+                <SegmentTimeline
+                  duration={duration}
+                  segments={segments}
+                  selectedId={selectedId}
+                  currentTime={currentTime}
+                  zoom={timelineZoom}
+                  disabled={exporting}
+                  onSelect={setSelectedId}
+                  onSeek={seek}
+                  onTrimStart={handleTrimStart}
+                  onTrimEnd={handleTrimEnd}
+                  onTrimDragStart={beginGesture}
+                  onTrimComplete={commitTrim}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -613,6 +683,114 @@ export function ProStudioEditor({
               </div>
             )}
 
+            {tab === "transform" && (
+              <div className="space-y-4">
+                <p className="text-xs text-gray-500">
+                  Crop, rotate, and flip your recording before export.
+                </p>
+                <label className="block space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <RotateCw className="h-3.5 w-3.5" />
+                    Rotation
+                  </span>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {([0, 90, 180, 270] as VideoRotation[]).map((deg) => (
+                      <button
+                        key={deg}
+                        type="button"
+                        onClick={() => setRotation(deg)}
+                        className={cn(
+                          "rounded-lg border py-2 text-xs font-mono transition",
+                          rotation === deg
+                            ? "border-blue-500/50 bg-blue-500/10 text-blue-300"
+                            : "border-gray-800 text-gray-500 hover:border-gray-700",
+                        )}
+                      >
+                        {deg}°
+                      </button>
+                    ))}
+                  </div>
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Crop className="h-3.5 w-3.5" />
+                    Crop
+                  </span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        ["none", "Original"],
+                        ["tight", "Tight 85%"],
+                        ["square", "1:1 Square"],
+                        ["cinema", "Cinema"],
+                      ] as const
+                    ).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setCrop(mode)}
+                        className={cn(
+                          "rounded-lg border py-2 text-xs transition",
+                          crop === mode
+                            ? "border-violet-500/50 bg-violet-500/10 text-violet-300"
+                            : "border-gray-800 text-gray-500 hover:border-gray-700",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </label>
+                <ToggleRow
+                  label="Flip horizontal"
+                  hint="Mirror the video left-to-right"
+                  active={flipH}
+                  onClick={() => setFlipH((v) => !v)}
+                />
+              </div>
+            )}
+
+            {tab === "effects" && (
+              <div className="space-y-4">
+                <p className="text-xs text-gray-500">
+                  Smooth fade transitions at the start and end of your export.
+                </p>
+                <label className="block space-y-1.5">
+                  <span className="text-xs text-gray-500">
+                    Fade in {fadeIn > 0 ? `· ${fadeIn.toFixed(1)}s` : "· off"}
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={3}
+                    step={0.1}
+                    value={fadeIn}
+                    onChange={(e) => setFadeIn(Number(e.target.value))}
+                    className="w-full accent-violet-500"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-xs text-gray-500">
+                    Fade out {fadeOut > 0 ? `· ${fadeOut.toFixed(1)}s` : "· off"}
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={3}
+                    step={0.1}
+                    value={fadeOut}
+                    onChange={(e) => setFadeOut(Number(e.target.value))}
+                    className="w-full accent-violet-500"
+                  />
+                </label>
+                {(fadeIn > 0 || fadeOut > 0) && (
+                  <p className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-[11px] text-violet-300/80">
+                    Fades apply on export. Preview shows transform only.
+                  </p>
+                )}
+              </div>
+            )}
+
             {tab === "social" && (
               <div className="space-y-3">
                 <p className="text-xs text-gray-500">
@@ -642,16 +820,32 @@ export function ProStudioEditor({
               <div className="space-y-3">
                 <ToggleRow
                   label="Noise clean"
-                  hint="High-pass + low-pass + FFT denoise"
+                  hint="High-pass + low-pass filter"
                   active={cleanAudio}
                   onClick={() => setCleanAudio((v) => !v)}
                 />
                 <ToggleRow
                   label="Voice boost"
-                  hint="+45% volume on speech"
+                  hint="+40% volume on speech"
                   active={voiceBoost}
                   onClick={() => setVoiceBoost((v) => !v)}
                 />
+                <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3 space-y-2">
+                  <p className="text-xs text-gray-400">
+                    Extract audio only — exports a WebM audio track from your
+                    kept segments (no video).
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full gap-2"
+                    disabled={!durationReady || exporting || segments.length === 0}
+                    onClick={() => void runExport(true, "audio")}
+                  >
+                    <Music className="h-4 w-4" />
+                    Export audio only
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -755,6 +949,91 @@ export function ProStudioEditor({
                     </label>
                   </>
                 )}
+
+                <div className="border-t border-gray-800/80 pt-3 space-y-3">
+                  <p className="text-[10px] uppercase tracking-wider text-gray-500">
+                    Image overlay
+                  </p>
+                  <input
+                    ref={stickerInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    onChange={(e) =>
+                      setStickerFile(e.target.files?.[0] ?? null)
+                    }
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full gap-2"
+                    onClick={() => stickerInputRef.current?.click()}
+                  >
+                    <ImagePlus className="h-4 w-4" />
+                    {stickerFile ? stickerFile.name : "Add image / sticker"}
+                  </Button>
+                  {stickerFile && (
+                    <>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-gray-500">Position</span>
+                        <select
+                          value={stickerPosition}
+                          onChange={(e) =>
+                            setStickerPosition(
+                              e.target.value as WatermarkPosition,
+                            )
+                          }
+                          className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200"
+                        >
+                          <option value="top-left">Top left</option>
+                          <option value="top-right">Top right</option>
+                          <option value="bottom-left">Bottom left</option>
+                          <option value="bottom-right">Bottom right</option>
+                        </select>
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-gray-500">
+                          Size {Math.round(stickerScale * 100)}%
+                        </span>
+                        <input
+                          type="range"
+                          min={0.08}
+                          max={0.5}
+                          step={0.02}
+                          value={stickerScale}
+                          onChange={(e) =>
+                            setStickerScale(Number(e.target.value))
+                          }
+                          className="w-full accent-blue-500"
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-gray-500">
+                          Opacity {Math.round(stickerOpacity * 100)}%
+                        </span>
+                        <input
+                          type="range"
+                          min={0.2}
+                          max={1}
+                          step={0.05}
+                          value={stickerOpacity}
+                          onChange={(e) =>
+                            setStickerOpacity(Number(e.target.value))
+                          }
+                          className="w-full accent-blue-500"
+                        />
+                      </label>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full text-gray-500"
+                        onClick={() => setStickerFile(null)}
+                      >
+                        Remove image
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
 

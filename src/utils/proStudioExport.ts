@@ -1,10 +1,13 @@
 import { trimVideoInBrowser } from "@/utils/videoProbe";
 import { exportVideo, type ExportQuality } from "@/utils/videoTrimmer";
-import {
-  overlayCoords,
-  type WatermarkPosition,
-} from "@/utils/watermarkCanvas";
+import { type WatermarkPosition } from "@/utils/watermarkCanvas";
 
+import {
+  buildStudioVideoFilter,
+  type AspectMode,
+  type CropMode,
+  type VideoRotation,
+} from "@/utils/studioFilters";
 import {
   getLastFfmpegLog,
   loadFfmpegEngine,
@@ -12,7 +15,9 @@ import {
 } from "@/utils/ffmpegLoader";
 
 export type ExportPreset = "ultra_hd" | "discord" | "email" | "balanced";
-export type AspectMode = "landscape" | "shorts";
+export type ExportMode = "video" | "audio";
+
+export type { AspectMode, CropMode, VideoRotation } from "@/utils/studioFilters";
 
 export type StudioExportConfig = {
   segments: { start: number; end: number }[];
@@ -21,7 +26,19 @@ export type StudioExportConfig = {
   voiceBoost: boolean;
   speed: number;
   preset: ExportPreset;
+  exportMode?: ExportMode;
+  rotation?: VideoRotation;
+  crop?: CropMode;
+  flipH?: boolean;
+  fadeIn?: number;
+  fadeOut?: number;
   watermark?: {
+    pngBytes: Uint8Array;
+    position: WatermarkPosition;
+    opacity: number;
+    scale: number;
+  };
+  sticker?: {
     pngBytes: Uint8Array;
     position: WatermarkPosition;
     opacity: number;
@@ -129,12 +146,17 @@ function buildAtempoChain(speed: number): string {
   return filters.join(",");
 }
 
-function shortsFilter(): string {
-  return [
-    "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=18[bg]",
-    "[0:v]scale=1080:-2:force_original_aspect_ratio=decrease[crop]",
-    "[bg][crop]overlay=(W-w)/2:(H-h)/2[outv]",
-  ].join(";");
+function hasVideoEffects(config: StudioExportConfig): boolean {
+  return (
+    config.aspectMode === "shorts" ||
+    !!config.watermark ||
+    !!config.sticker ||
+    (config.rotation ?? 0) !== 0 ||
+    (config.crop ?? "none") !== "none" ||
+    !!config.flipH ||
+    (config.fadeIn ?? 0) > 0 ||
+    (config.fadeOut ?? 0) > 0
+  );
 }
 
 async function cutClip(
@@ -258,51 +280,72 @@ async function concatSegments(
   return "merged.webm";
 }
 
-function buildVideoFilterComplex(
-  config: StudioExportConfig,
-  wm: StudioExportConfig["watermark"],
-): string | null {
-  const wmOpacity = wm?.opacity ?? 0.85;
-  const wmScale = wm?.scale ?? 0.14;
-  const wmPos = wm ? overlayCoords(wm.position) : "";
-
-  if (config.aspectMode === "shorts" && wm) {
-    return `${shortsFilter().replace("[outv]", "[base]")};[1:v]format=rgba,colorchannelmixer=aa=${wmOpacity},scale=iw*${wmScale}:-1[logo];[base][logo]overlay=${wmPos}[outv]`;
-  }
-  if (config.aspectMode === "shorts") return shortsFilter();
-  if (wm) {
-    return `[1:v]format=rgba,colorchannelmixer=aa=${wmOpacity},scale=iw*${wmScale}:-1[logo];[0:v][logo]overlay=${wmPos}[outv]`;
-  }
-  return null;
-}
-
 async function encodeMerged(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ffmpeg: any,
   config: StudioExportConfig,
   mergedName: string,
+  totalDuration: number,
   attempt: number,
   onProgress?: ProgressCallback,
 ): Promise<Uint8Array> {
-  const wm = config.watermark;
-  const videoFilter = buildVideoFilterComplex(config, wm);
-  const scaleOnly = !videoFilter ? scaleFilterForPreset(config.preset) : null;
+  const outputName =
+    config.exportMode === "audio" ? "final-audio.webm" : "final.webm";
   const speed = config.speed;
   const hasSpeed = speed !== 1;
-  const outputName = "final.webm";
 
-  const inputs = wm
-    ? ["-i", mergedName, "-i", "logo.png"]
-    : ["-i", mergedName];
-  const args: string[] = [...inputs];
+  if (config.exportMode === "audio") {
+    const args: string[] = ["-i", mergedName, "-vn"];
+    const audioChain = audioFilterChain(config.cleanAudio, config.voiceBoost);
+    if (hasSpeed) {
+      const tempo = buildAtempoChain(speed);
+      const merged = [audioChain, tempo].filter(Boolean).join(",");
+      if (merged) args.push("-af", merged);
+    } else if (audioChain) {
+      args.push("-af", audioChain);
+    }
+    args.push("-c:a", "libopus", "-b:a", "192k", outputName);
+    onProgress?.("Extracting audio…", 60);
+    await execChecked(ffmpeg, args, "Audio extract");
+    return (await ffmpeg.readFile(outputName)) as Uint8Array;
+  }
+
+  const wm = config.watermark;
+  const sticker = config.sticker;
+  const videoFilter = buildStudioVideoFilter({
+    aspectMode: config.aspectMode,
+    rotation: config.rotation ?? 0,
+    crop: config.crop ?? "none",
+    flipH: !!config.flipH,
+    fadeIn: config.fadeIn ?? 0,
+    fadeOut: config.fadeOut ?? 0,
+    totalDuration,
+    watermark: wm
+      ? { opacity: wm.opacity, scale: wm.scale, position: wm.position }
+      : undefined,
+    sticker: sticker
+      ? {
+          opacity: sticker.opacity,
+          scale: sticker.scale,
+          position: sticker.position,
+        }
+      : undefined,
+    watermarkInput: wm ? "1:v" : undefined,
+    stickerInput: sticker ? (wm ? "2:v" : "1:v") : undefined,
+  });
+  const scaleOnly = !videoFilter ? scaleFilterForPreset(config.preset) : null;
+
+  const args: string[] = ["-i", mergedName];
+  if (wm) args.push("-i", "logo.png");
+  if (sticker) args.push("-i", "sticker.png");
 
   if (videoFilter) {
     let chain = videoFilter;
     if (hasSpeed) {
-      chain = `${chain.replace("[outv]", "[v]")};[v]setpts=PTS/${speed}[outv]`;
+      chain = `${chain.replace("[outv]", "[vspd]")};[vspd]setpts=PTS/${speed}[outv]`;
     }
     if (scaleOnly) {
-      chain = `${chain.replace("[outv]", "[v2]")};[v2]${scaleOnly}[outv]`;
+      chain = `${chain.replace("[outv]", "[vsc]")};[vsc]${scaleOnly}[outv]`;
     }
     args.push("-filter_complex", chain);
     args.push("-map", "[outv]");
@@ -336,6 +379,10 @@ async function encodeMerged(
   return (await ffmpeg.readFile(outputName)) as Uint8Array;
 }
 
+function segmentDuration(segments: { start: number; end: number }[]): number {
+  return segments.reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0);
+}
+
 async function runFfmpegPipeline(
   blob: Blob,
   config: StudioExportConfig,
@@ -344,6 +391,9 @@ async function runFfmpegPipeline(
   const segments = config.segments.filter((s) => s.end > s.start);
   const { ffmpeg, fetchFile } = await loadFfmpeg(onProgress);
   const inputName = "input.webm";
+  const isAudio = config.exportMode === "audio";
+  const mime = isAudio ? "audio/webm" : "video/webm";
+  const totalDuration = segmentDuration(segments) / config.speed;
 
   await ffmpeg.writeFile(inputName, await fetchFile(blob));
   const mergedName = await concatSegments(ffmpeg, segments, inputName, onProgress);
@@ -351,33 +401,61 @@ async function runFfmpegPipeline(
   if (config.watermark) {
     await ffmpeg.writeFile("logo.png", config.watermark.pngBytes);
   }
+  if (config.sticker) {
+    await ffmpeg.writeFile("sticker.png", config.sticker.pngBytes);
+  }
 
   let data: Uint8Array;
   try {
-    data = await encodeMerged(ffmpeg, config, mergedName, 0, onProgress);
+    data = await encodeMerged(
+      ffmpeg,
+      config,
+      mergedName,
+      totalDuration,
+      0,
+      onProgress,
+    );
   } catch {
-    data = await encodeMerged(ffmpeg, config, mergedName, 1, onProgress);
+    data = await encodeMerged(
+      ffmpeg,
+      config,
+      mergedName,
+      totalDuration,
+      1,
+      onProgress,
+    );
   }
 
-  let result = toBlob(data, "video/webm");
-  const maxBytes =
-    config.preset === "discord"
-      ? 8 * 1024 * 1024
-      : config.preset === "email"
-        ? 25 * 1024 * 1024
-        : Infinity;
+  let result = toBlob(data, mime);
 
-  let attempt = 2;
-  while (result.size > maxBytes && attempt < 5) {
-    onProgress?.(`Compressing for ${config.preset}…`, 70 + attempt * 4);
-    data = await encodeMerged(ffmpeg, config, mergedName, attempt, onProgress);
-    result = toBlob(data, "video/webm");
-    attempt += 1;
+  if (!isAudio) {
+    const maxBytes =
+      config.preset === "discord"
+        ? 8 * 1024 * 1024
+        : config.preset === "email"
+          ? 25 * 1024 * 1024
+          : Infinity;
+
+    let attempt = 2;
+    while (result.size > maxBytes && attempt < 5) {
+      onProgress?.(`Compressing for ${config.preset}…`, 70 + attempt * 4);
+      data = await encodeMerged(
+        ffmpeg,
+        config,
+        mergedName,
+        totalDuration,
+        attempt,
+        onProgress,
+      );
+      result = toBlob(data, mime);
+      attempt += 1;
+    }
   }
 
   await ffmpeg.deleteFile(inputName).catch(() => undefined);
   await ffmpeg.deleteFile(mergedName).catch(() => undefined);
   if (config.watermark) await ffmpeg.deleteFile("logo.png").catch(() => undefined);
+  if (config.sticker) await ffmpeg.deleteFile("sticker.png").catch(() => undefined);
 
   onProgress?.("Done", 100);
   return result;
@@ -392,8 +470,8 @@ export async function renderStudioExport(
   if (segments.length === 0) throw new Error("No segments to export.");
 
   const needsAdvancedPipeline =
-    config.aspectMode === "shorts" ||
-    !!config.watermark ||
+    config.exportMode === "audio" ||
+    hasVideoEffects(config) ||
     config.cleanAudio ||
     config.voiceBoost ||
     config.speed !== 1 ||
@@ -430,7 +508,12 @@ export async function renderStudioExport(
   try {
     return await runFfmpegPipeline(blob, config, onProgress);
   } catch (err) {
-    if (segments.length === 1 && config.aspectMode === "landscape" && !config.watermark) {
+    if (
+      segments.length === 1 &&
+      config.aspectMode === "landscape" &&
+      !hasVideoEffects(config) &&
+      config.exportMode !== "audio"
+    ) {
       const s = segments[0];
       onProgress?.("Advanced export failed — trying simple trim…", 12);
       try {
