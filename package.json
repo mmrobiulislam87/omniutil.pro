@@ -2,6 +2,9 @@
   "name": "omniutil-pro",
   "version": "0.2.1",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "build:tac": "node scripts/build-tac-index.mjs",
     "dev": "next dev",
