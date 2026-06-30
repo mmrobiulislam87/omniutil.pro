@@ -1,3 +1,10 @@
+import {
+  startBreakoutCompositor,
+  startCanvasCompositor,
+  supportsBreakoutCompositor,
+  type CompositorHandle,
+} from "@/utils/screenCompositor";
+
 export type QualityPreset = "720p" | "1080p" | "1440p";
 export type FrameRate = 30 | 60;
 export type CameraPosition =
@@ -17,7 +24,6 @@ export type RecorderOptions = {
   systemGain: number;
   cameraPosition: CameraPosition;
   cameraSize: CameraSize;
-  /** e.g. 3-2-1 countdown before MediaRecorder starts */
   onBeforeStart?: () => Promise<void>;
 };
 
@@ -39,12 +45,6 @@ const QUALITY_MAP: Record<
   "1440p": { width: 2560, height: 1440, bitrate: 4_000_000 },
 };
 
-const CAMERA_SCALE: Record<CameraSize, number> = {
-  sm: 0.16,
-  md: 0.22,
-  lg: 0.28,
-};
-
 function pickMimeType(): string {
   const candidates = [
     "video/webm;codecs=vp9,opus",
@@ -59,6 +59,7 @@ function pickMimeType(): string {
 type AudioMixer = {
   tracks: MediaStreamTrack[];
   context: AudioContext;
+  keepAlive: ReturnType<typeof setInterval>;
   close: () => void;
 };
 
@@ -79,119 +80,19 @@ function mixAudioTracks(
     gainNode.connect(destination);
   }
 
+  void context.resume();
+
+  const keepAlive = setInterval(() => {
+    if (context.state === "suspended") void context.resume();
+  }, 1500);
+
   return {
     tracks: destination.stream.getAudioTracks(),
     context,
-    close: () => void context.close(),
-  };
-}
-
-type Compositor = {
-  stream: MediaStream;
-  stop: () => void;
-};
-
-function cameraRect(
-  width: number,
-  height: number,
-  camW: number,
-  camH: number,
-  position: CameraPosition,
-  pad: number,
-) {
-  const positions: Record<CameraPosition, { x: number; y: number }> = {
-    "bottom-right": { x: width - camW - pad, y: height - camH - pad },
-    "bottom-left": { x: pad, y: height - camH - pad },
-    "top-right": { x: width - camW - pad, y: pad },
-    "top-left": { x: pad, y: pad },
-  };
-  return positions[position];
-}
-
-function startCompositor(
-  screenVideo: HTMLVideoElement,
-  cameraVideo: HTMLVideoElement | null,
-  width: number,
-  height: number,
-  frameRate: FrameRate,
-  cameraPosition: CameraPosition,
-  cameraSize: CameraSize,
-): Compositor {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d", { alpha: false });
-  if (!ctx) throw new Error("Canvas 2D context unavailable.");
-
-  let stopped = false;
-  let frameId = 0;
-
-  const draw = () => {
-    if (stopped) return;
-
-    if (screenVideo.readyState >= 2) {
-      ctx.drawImage(screenVideo, 0, 0, width, height);
-    }
-
-    if (cameraVideo && cameraVideo.readyState >= 2) {
-      const scale = CAMERA_SCALE[cameraSize];
-      const pw = Math.round(width * scale);
-      const ph = Math.round(
-        (pw * cameraVideo.videoHeight) / cameraVideo.videoWidth || pw * 0.75,
-      );
-      const pad = Math.round(width * 0.012);
-      const { x, y } = cameraRect(
-        width,
-        height,
-        pw,
-        ph,
-        cameraPosition,
-        pad,
-      );
-
-      ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,0.45)";
-      ctx.shadowBlur = 12;
-      ctx.shadowOffsetY = 4;
-      ctx.beginPath();
-      if (typeof ctx.roundRect === "function") {
-        ctx.roundRect(x, y, pw, ph, 14);
-      } else {
-        ctx.rect(x, y, pw, ph);
-      }
-      ctx.fillStyle = "#000";
-      ctx.fill();
-      ctx.clip();
-      ctx.drawImage(cameraVideo, x, y, pw, ph);
-      ctx.restore();
-
-      ctx.strokeStyle = "rgba(255,255,255,0.5)";
-      ctx.lineWidth = 2;
-      if (typeof ctx.roundRect === "function") {
-        ctx.beginPath();
-        ctx.roundRect(x, y, pw, ph, 14);
-        ctx.stroke();
-      }
-    }
-
-    if ("requestVideoFrameCallback" in screenVideo) {
-      (
-        screenVideo as HTMLVideoElement & {
-          requestVideoFrameCallback: (cb: () => void) => number;
-        }
-      ).requestVideoFrameCallback(draw);
-    } else {
-      frameId = requestAnimationFrame(draw);
-    }
-  };
-
-  draw();
-
-  return {
-    stream: canvas.captureStream(frameRate),
-    stop: () => {
-      stopped = true;
-      cancelAnimationFrame(frameId);
+    keepAlive,
+    close: () => {
+      clearInterval(keepAlive);
+      void context.close();
     },
   };
 }
@@ -213,22 +114,13 @@ export async function startScreenRecording(
   }
 
   const spec = QUALITY_MAP[options.quality];
-
-  const displayStream = await navigator.mediaDevices.getDisplayMedia({
-    video: {
-      width: { ideal: spec.width },
-      height: { ideal: spec.height },
-      frameRate: { ideal: options.frameRate },
-    },
-    audio: options.includeSystemAudio,
-  });
-
-  const streamsToStop: MediaStream[] = [displayStream];
+  const streamsToStop: MediaStream[] = [];
   let micStream: MediaStream | null = null;
   let cameraStream: MediaStream | null = null;
   let audioMixer: AudioMixer | null = null;
 
   try {
+    // Acquire mic/camera BEFORE display picker so tracks stay live after share dialog.
     if (options.includeMic) {
       micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -239,6 +131,7 @@ export async function startScreenRecording(
       });
       streamsToStop.push(micStream);
     }
+
     if (options.includeCamera) {
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -252,6 +145,23 @@ export async function startScreenRecording(
       streamsToStop.push(cameraStream);
     }
 
+    const displayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        width: { ideal: spec.width },
+        height: { ideal: spec.height },
+        frameRate: { ideal: options.frameRate },
+      },
+      audio: options.includeSystemAudio,
+      // @ts-expect-error — Chrome prefersCurrentTab hint (ignored elsewhere)
+      preferCurrentTab: false,
+    });
+    streamsToStop.push(displayStream);
+
+    const screenTrack = displayStream.getVideoTracks()[0];
+    if (!screenTrack) {
+      throw new Error("No video track in screen capture.");
+    }
+
     const screenVideo = document.createElement("video");
     await attachStream(screenVideo, displayStream);
 
@@ -259,23 +169,35 @@ export async function startScreenRecording(
     const height = screenVideo.videoHeight || spec.height;
 
     let videoStream: MediaStream;
-    let compositor: Compositor | null = null;
+    let compositor: CompositorHandle | null = null;
+    const cameraTrack = cameraStream?.getVideoTracks()[0] ?? null;
 
-    if (cameraStream) {
-      const cameraVideo = document.createElement("video");
-      await attachStream(cameraVideo, cameraStream);
-      compositor = startCompositor(
-        screenVideo,
-        cameraVideo,
-        width,
-        height,
-        options.frameRate,
-        options.cameraPosition,
-        options.cameraSize,
-      );
+    if (cameraTrack) {
+      if (supportsBreakoutCompositor()) {
+        compositor = startBreakoutCompositor(
+          screenTrack,
+          cameraTrack,
+          width,
+          height,
+          options.cameraPosition,
+          options.cameraSize,
+        );
+      } else {
+        const cameraVideo = document.createElement("video");
+        await attachStream(cameraVideo, cameraStream!);
+        compositor = startCanvasCompositor(
+          screenVideo,
+          cameraVideo,
+          width,
+          height,
+          options.frameRate,
+          options.cameraPosition,
+          options.cameraSize,
+        );
+      }
       videoStream = compositor.stream;
     } else {
-      videoStream = new MediaStream(displayStream.getVideoTracks());
+      videoStream = new MediaStream([screenTrack]);
     }
 
     const audioSources: { track: MediaStreamTrack; gain: number }[] = [];
@@ -305,7 +227,7 @@ export async function startScreenRecording(
       audioBitsPerSecond: 128_000,
     });
 
-    let startedAt = Date.now();
+    const startedAt = Date.now();
     let pausedAt: number | null = null;
     let totalPausedMs = 0;
 
@@ -323,16 +245,14 @@ export async function startScreenRecording(
     await options.onBeforeStart?.();
     recorder.start(250);
 
-    const stopDisplayTrack = displayStream.getVideoTracks()[0];
-    stopDisplayTrack?.addEventListener("ended", () => {
+    screenTrack.addEventListener("ended", () => {
       if (recorder.state === "recording") recorder.stop();
     });
 
     return {
       getElapsedMs: () => {
         const now = Date.now();
-        const pauseExtra =
-          pausedAt != null ? now - pausedAt : 0;
+        const pauseExtra = pausedAt != null ? now - pausedAt : 0;
         return now - startedAt - totalPausedMs - pauseExtra;
       },
       getPausedMs: () => totalPausedMs,
@@ -347,6 +267,7 @@ export async function startScreenRecording(
         totalPausedMs += Date.now() - pausedAt;
         pausedAt = null;
         recorder.resume();
+        void audioMixer?.context.resume();
       },
       stop: async () => {
         if (recorder.state === "recording" || recorder.state === "paused") {
@@ -376,9 +297,7 @@ export function formatRecordingTime(ms: number, showMs = false): string {
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = Math.floor(totalSec % 60);
-  const frac = showMs
-    ? `.${String(Math.floor((totalSec % 1) * 10))}`
-    : "";
+  const frac = showMs ? `.${String(Math.floor((totalSec % 1) * 10))}` : "";
   if (h > 0) {
     return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}${frac}`;
   }
@@ -405,3 +324,10 @@ export const CAMERA_SIZES: { id: CameraSize; label: string }[] = [
   { id: "md", label: "Medium" },
   { id: "lg", label: "Large" },
 ];
+
+export const CAPTURE_GUIDE = [
+  "To record YouTube or other sites: choose Entire Screen or Window — not this recorder tab.",
+  "Or open the target site in another tab first, then share that specific tab.",
+  "Do not navigate away from this page in the same tab — it stops the recorder.",
+  "A floating control window opens while recording — keep it open.",
+] as const;

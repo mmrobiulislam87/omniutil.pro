@@ -29,6 +29,7 @@ import { downloadBlob, formatBytes } from "@/lib/format";
 import {
   CAMERA_POSITIONS,
   CAMERA_SIZES,
+  CAPTURE_GUIDE,
   FRAME_RATES,
   formatRecordingTime,
   QUALITY_PRESETS,
@@ -39,6 +40,11 @@ import {
   type QualityPreset,
   type RecordingSession,
 } from "@/utils/screenRecorder";
+import {
+  openRecordingPip,
+  requestScreenWakeLock,
+  type PipController,
+} from "@/utils/recordingPip";
 import {
   EXPORT_QUALITIES,
   exportVideo,
@@ -87,6 +93,9 @@ export function ScreenRecorder() {
   const sessionRef = useRef<RecordingSession | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewRef = useRef<HTMLVideoElement>(null);
+  const pipRef = useRef<PipController | null>(null);
+  const wakeLockReleaseRef = useRef<(() => void) | null>(null);
+  const stopRecordingRef = useRef<() => Promise<void>>(async () => {});
 
   const revokeVideoUrl = useCallback((url: string | null) => {
     if (url) URL.revokeObjectURL(url);
@@ -95,9 +104,24 @@ export function ScreenRecorder() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      pipRef.current?.close();
+      wakeLockReleaseRef.current?.();
       revokeVideoUrl(videoUrl);
     };
   }, [videoUrl, revokeVideoUrl]);
+
+  useEffect(() => {
+    if (phase !== "recording") return;
+
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue =
+        "Recording in progress. Leaving this page will stop the recording.";
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [phase]);
 
   const setBlobPreview = useCallback(
     (blob: Blob) => {
@@ -109,8 +133,16 @@ export function ScreenRecorder() {
     [videoUrl, revokeVideoUrl],
   );
 
+  const cleanupRecordingExtras = useCallback(() => {
+    pipRef.current?.close();
+    pipRef.current = null;
+    wakeLockReleaseRef.current?.();
+    wakeLockReleaseRef.current = null;
+  }, []);
+
   const clearAll = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
+    cleanupRecordingExtras();
     sessionRef.current = null;
     revokeVideoUrl(videoUrl);
     setVideoUrl(null);
@@ -126,7 +158,7 @@ export function ScreenRecorder() {
     setCountdown(null);
     setError(null);
     setPhase("idle");
-  }, [videoUrl, revokeVideoUrl]);
+  }, [videoUrl, revokeVideoUrl, cleanupRecordingExtras]);
 
   const recorderOptions = useCallback(
     () => ({
@@ -169,12 +201,35 @@ export function ScreenRecorder() {
       sessionRef.current = session;
       setIsPaused(false);
       setElapsedMs(0);
+
+      const releaseWake = await requestScreenWakeLock();
+      wakeLockReleaseRef.current = releaseWake;
+
+      pipRef.current = await openRecordingPip({
+        onStop: () => void stopRecordingRef.current(),
+        onPause: () => {
+          session.pause();
+          setIsPaused(true);
+        },
+        onResume: () => {
+          session.resume();
+          setIsPaused(false);
+        },
+        isPaused: () => session.isPaused(),
+      });
+
       timerRef.current = setInterval(() => {
-        if (sessionRef.current && !sessionRef.current.isPaused()) {
-          setElapsedMs(sessionRef.current.getElapsedMs());
-        }
+        if (!sessionRef.current) return;
+        const ms = sessionRef.current.getElapsedMs();
+        const paused = sessionRef.current.isPaused();
+        setElapsedMs(ms);
+        pipRef.current?.updateTimer(
+          formatRecordingTime(ms, true),
+          paused,
+        );
       }, 100);
     } catch (err) {
+      cleanupRecordingExtras();
       setCountdown(null);
       setPhase("idle");
       setError(
@@ -183,7 +238,7 @@ export function ScreenRecorder() {
           : "Could not start screen recording. Allow screen share when prompted.",
       );
     }
-  }, [recorderOptions]);
+  }, [recorderOptions, cleanupRecordingExtras]);
 
   const togglePause = useCallback(() => {
     const session = sessionRef.current;
@@ -205,6 +260,7 @@ export function ScreenRecorder() {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    cleanupRecordingExtras();
 
     try {
       const blob = await session.stop();
@@ -216,7 +272,9 @@ export function ScreenRecorder() {
       setError(err instanceof Error ? err.message : "Failed to save recording.");
       setPhase("idle");
     }
-  }, [setBlobPreview]);
+  }, [setBlobPreview, cleanupRecordingExtras]);
+
+  stopRecordingRef.current = stopRecording;
 
   const onPreviewLoaded = useCallback(() => {
     const video = previewRef.current;
@@ -337,11 +395,24 @@ export function ScreenRecorder() {
           Pro Studio · MediaRecorder + ffmpeg.wasm
         </p>
         <p className="mt-1 text-xs leading-relaxed text-gray-400">
-          Up to 1440p @ 60fps with balanced mic/system audio, webcam PiP, pause
-          resume, visual timeline editor, speed control, and local export — no
-          extension, no watermark, no uploads.
+          Up to 1440p @ 60fps with mic, system audio, and webcam PiP. Switch
+          tabs freely when sharing Entire Screen or a target tab — a floating
+          control window keeps recording alive.
         </p>
       </div>
+
+      {phase === "idle" && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-amber-100/90">
+          <p className="mb-2 font-semibold text-amber-300">
+            How to record other sites (YouTube, etc.)
+          </p>
+          <ul className="list-inside list-disc space-y-1 text-amber-100/80">
+            {CAPTURE_GUIDE.map((tip) => (
+              <li key={tip}>{tip}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {phase === "idle" && (
         <div className="space-y-5 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-6">
@@ -515,6 +586,11 @@ export function ScreenRecorder() {
               {quality} · {frameRate}fps
             </span>
           </div>
+
+          <p className="text-xs text-gray-500">
+            Switch tabs freely if you shared Entire Screen or another tab. Keep
+            this page and the floating control window open.
+          </p>
 
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={togglePause} className="gap-2">
