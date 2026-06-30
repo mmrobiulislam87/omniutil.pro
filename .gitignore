@@ -45,5 +45,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Osmocom source dump (regenerate with npm run build:tac)
+# ffmpeg.wasm binaries (copied from @ffmpeg/core on install/build)
+/public/ffmpeg/
 /public/data/tac-osmocom.json

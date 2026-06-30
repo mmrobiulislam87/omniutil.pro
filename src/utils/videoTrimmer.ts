@@ -1,6 +1,5 @@
 import { trimVideoInBrowser } from "@/utils/videoProbe";
-
-const FFMPEG_CORE_VERSION = "0.12.10";
+import { loadFfmpegEngine } from "@/utils/ffmpegLoader";
 
 export type ExportQuality = "high" | "balanced" | "compact";
 export type ExportMode = "video" | "audio";
@@ -16,40 +15,8 @@ export type VideoExportOptions = {
 
 type ProgressCallback = (message: string, ratio?: number) => void;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let ffmpegPromise: Promise<any> | null = null;
-
-const QUALITY_BITRATE: Record<ExportQuality, string> = {
-  high: "4M",
-  balanced: "2M",
-  compact: "1M",
-};
-
 async function loadFfmpeg(onProgress?: ProgressCallback) {
-  if (!ffmpegPromise) {
-    ffmpegPromise = (async () => {
-      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-      const { fetchFile, toBlobURL } = await import("@ffmpeg/util");
-
-      const ffmpeg = new FFmpeg();
-      ffmpeg.on("progress", ({ progress }: { progress: number }) => {
-        onProgress?.("Processing…", Math.round(progress * 100));
-      });
-
-      onProgress?.("Loading video engine (first export)…", 5);
-      const base = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
-      await ffmpeg.load({
-        coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
-        wasmURL: await toBlobURL(
-          `${base}/ffmpeg-core.wasm`,
-          "application/wasm",
-        ),
-      });
-
-      return { ffmpeg, fetchFile };
-    })();
-  }
-  return ffmpegPromise;
+  return loadFfmpegEngine(onProgress);
 }
 
 function buildAtempoFilter(speed: number): string {
@@ -67,6 +34,12 @@ function buildAtempoFilter(speed: number): string {
   if (remaining !== 1) filters.push(`atempo=${remaining}`);
   return filters.join(",");
 }
+
+const QUALITY_BITRATE: Record<ExportQuality, string> = {
+  high: "4M",
+  balanced: "2M",
+  compact: "1M",
+};
 
 function toBlob(data: Uint8Array | string, mime: string): Blob {
   if (typeof data === "string") {

@@ -5,7 +5,11 @@ import {
   type WatermarkPosition,
 } from "@/utils/watermarkCanvas";
 
-const FFMPEG_CORE_VERSION = "0.12.10";
+import {
+  getLastFfmpegLog,
+  loadFfmpegEngine,
+  resetFfmpegLoader,
+} from "@/utils/ffmpegLoader";
 
 export type ExportPreset = "ultra_hd" | "discord" | "email" | "balanced";
 export type AspectMode = "landscape" | "shorts";
@@ -27,24 +31,15 @@ export type StudioExportConfig = {
 
 type ProgressCallback = (message: string, ratio?: number) => void;
 
-type FfmpegBundle = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ffmpeg: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  fetchFile: (data: any) => Promise<Uint8Array>;
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let ffmpegPromise: Promise<FfmpegBundle> | null = null;
-let lastFfmpegLog = "";
-
 function resetFfmpeg(): void {
-  ffmpegPromise = null;
+  resetFfmpegLoader();
 }
 
 function exportError(err: unknown, fallback: string): Error {
   if (err instanceof Error) {
-    const detail = lastFfmpegLog ? ` ${lastFfmpegLog.slice(-180)}` : "";
+    const detail = getLastFfmpegLog()
+      ? ` ${getLastFfmpegLog().slice(-180)}`
+      : "";
     return new Error(
       err.message.includes("ffmpeg") || err.message.includes("failed")
         ? `${err.message}${detail}`
@@ -55,41 +50,16 @@ function exportError(err: unknown, fallback: string): Error {
   return new Error(fallback);
 }
 
-async function loadFfmpeg(onProgress?: ProgressCallback): Promise<FfmpegBundle> {
-  if (!ffmpegPromise) {
-    ffmpegPromise = (async () => {
-      try {
-        const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-        const { fetchFile, toBlobURL } = await import("@ffmpeg/util");
-        const ffmpeg = new FFmpeg();
-
-        ffmpeg.on("log", ({ message }: { message: string }) => {
-          lastFfmpegLog = message;
-        });
-        ffmpeg.on("progress", ({ progress }: { progress: number }) => {
-          onProgress?.("Rendering…", Math.min(99, Math.round(progress * 100)));
-        });
-
-        onProgress?.("Loading ProStudio engine…", 8);
-        const base = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
-        await ffmpeg.load({
-          coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
-          wasmURL: await toBlobURL(
-            `${base}/ffmpeg-core.wasm`,
-            "application/wasm",
-          ),
-        });
-        return { ffmpeg, fetchFile };
-      } catch (err) {
-        resetFfmpeg();
-        throw exportError(
-          err,
-          "Could not load video engine. Check your connection and try again.",
-        );
-      }
-    })();
+async function loadFfmpeg(onProgress?: ProgressCallback) {
+  try {
+    return await loadFfmpegEngine(onProgress);
+  } catch (err) {
+    resetFfmpegLoader();
+    throw exportError(
+      err,
+      "Could not load video engine. Check your connection and try again.",
+    );
   }
-  return ffmpegPromise;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -100,7 +70,9 @@ async function execChecked(
 ): Promise<void> {
   const code = await ffmpeg.exec(args);
   if (code !== 0) {
-    const detail = lastFfmpegLog ? ` — ${lastFfmpegLog.slice(-120)}` : "";
+    const detail = getLastFfmpegLog()
+      ? ` — ${getLastFfmpegLog().slice(-120)}`
+      : "";
     throw new Error(`${step} failed${detail}`);
   }
 }
@@ -215,7 +187,8 @@ async function cutClip(
 }
 
 async function concatSegments(
-  ffmpeg: FfmpegBundle["ffmpeg"],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ffmpeg: any,
   segments: { start: number; end: number }[],
   inputName: string,
   onProgress?: ProgressCallback,
@@ -304,7 +277,8 @@ function buildVideoFilterComplex(
 }
 
 async function encodeMerged(
-  ffmpeg: FfmpegBundle["ffmpeg"],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ffmpeg: any,
   config: StudioExportConfig,
   mergedName: string,
   attempt: number,
