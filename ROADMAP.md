@@ -3,7 +3,7 @@
 > Privacy-first, zero-server-cost utility platform for developers, creators, and professionals.
 > All processing happens 100% in the browser — your data never leaves your device.
 
-**Current version:** `v0.7.0`  
+**Current version:** `v0.8.0`  
 **Last updated:** June 29, 2026
 
 ---
@@ -20,14 +20,14 @@ Build the most trusted client-side utility platform on the web — scalable to 1
 |-------|--------|--------|
 | **MVP** | Core architecture + 3 tools | ✅ Complete |
 | **Phase 1** | Polish & Launch | ✅ Complete |
-| **Phase 2** | Growth & new tools | 🚧 In Progress (~55%) |
+| **Phase 2** | Growth & new tools | 🚧 In Progress (~70%) |
 | **Phase 3** | Scale to 100 tools | 📋 Planned |
 | **Phase 4** | Ecosystem | 💡 Future |
 
 ```
 MVP ████████████████████ 100%
 P1  ████████████████████ 100%
-P2  ███████████░░░░░░░░░  55%
+P2  ██████████████░░░░░░  70%
 ```
 
 ---
@@ -140,10 +140,13 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 **Goal:** Increase traffic, retention, and tool count  
 **Timeline:** 2–4 weeks
 
-### Live tools (8 total)
+### Live tools (11 total)
 
 | Tool | Route | Version |
 |------|-------|---------|
+| WASM Local Transcriber | `/audio-transcriber` | v0.8.0 |
+| Visual Regex Builder | `/regex-builder` | v0.8.0 |
+| Secure JWT Debugger | `/jwt-debugger` | v0.8.0 |
 | SVG-to-Code Transformer | `/svg-to-code` | v0.7.0 |
 | IMEI Checker & Device Lookup | `/imei-checker` | v0.6.1 |
 | JSON Formatter & Validator | `/json-formatter` | v0.5.0 |
@@ -172,9 +175,9 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 | Order | Tool | Stack | Status |
 |-------|------|-------|--------|
 | **6** | **SVG-to-Code Transformer** | `svgo/browser` + JSX codegen | ✅ Live |
-| **7** | Secure JWT & Crypto Debugger | Web Crypto API | 📋 Next |
-| **8** | Visual Regex Builder | Pure JS parser | 📋 |
-| **9** | WASM Local Transcriber | `whisper.wasm` | 📋 |
+| **7** | **Secure JWT & Crypto Debugger** | Web Crypto API | ✅ Live |
+| **8** | **Visual Regex Builder** | Pure JS parser | ✅ Live |
+| **9** | **WASM Local Transcriber** | `@huggingface/transformers` + Whisper | ✅ Live |
 
 **Adding a new tool:**
 1. Add entry to `src/lib/tools.ts` (auto-added to sitemap)
@@ -242,6 +245,11 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ---
 
 ## Release History
+
+### v0.8.0 — Elite Tools Pipeline Complete (Jun 29, 2026)
+- **JWT Debugger** (`/jwt-debugger`) — color-coded decode, HS256 Web Crypto verify
+- **Visual Regex Builder** (`/regex-builder`) — live highlighting, flags, presets
+- **WASM Local Transcriber** (`/audio-transcriber`) — Whisper tiny via Transformers.js
 
 ### v0.7.0 — SVG-to-Code Transformer (Jun 29, 2026)
 - New tool: **SVG-to-Code Transformer** (`/svg-to-code`)
@@ -362,8 +370,8 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 1. **GSC follow-up** — Resubmit sitemap (now 7 URLs); request indexing for new tools
 2. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
-3. **Phase 2.1b** — JWT & Crypto Debugger ← **next elite tool**
-4. **Phase 2.1** — QR Code Generator (high traffic)
+3. **Phase 2.1** — QR Code Generator ← **next**
+4. **Phase 2.1** — PDF Merger / Splitter
 5. **Production smoke test** — Run checklist for all 6 live tools
 
 ---

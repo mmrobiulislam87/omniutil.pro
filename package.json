@@ -5,11 +5,12 @@
   "scripts": {
     "build:tac": "node scripts/build-tac-index.mjs",
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@imgly/background-removal": "^1.7.0",
     "@pdf-lib/fontkit": "^1.1.1",
     "browser-image-compression": "^2.0.2",
