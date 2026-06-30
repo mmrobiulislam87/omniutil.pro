@@ -4,6 +4,7 @@ import {
   Eraser,
   FileText,
   ImageIcon,
+  PenTool,
   Smartphone,
   Sparkles,
   type LucideIcon,
@@ -24,6 +25,29 @@ export type Tool = {
 };
 
 export const TOOLS: Tool[] = [
+  {
+    id: "svg-to-code",
+    name: "SVG to Code",
+    dashboardTitle: "SVG-to-Code Transformer",
+    description:
+      "Optimize SVGs with SVGO and generate React or Tailwind TSX components instantly. Live preview, one-click copy — 100% client-side.",
+    href: "/svg-to-code",
+    icon: PenTool,
+    emoji: "🎨",
+    badge: "SVGO / Dev",
+    category: "Dev",
+    tags: [
+      "svg",
+      "react",
+      "tailwind",
+      "svgo",
+      "icon",
+      "tsx",
+      "frontend",
+      "designer",
+      "convert",
+    ],
+  },
   {
     id: "imei-checker",
     name: "IMEI Checker",

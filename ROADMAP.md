@@ -3,7 +3,7 @@
 > Privacy-first, zero-server-cost utility platform for developers, creators, and professionals.
 > All processing happens 100% in the browser — your data never leaves your device.
 
-**Current version:** `v0.5.0`  
+**Current version:** `v0.7.0`  
 **Last updated:** June 29, 2026
 
 ---
@@ -20,14 +20,14 @@ Build the most trusted client-side utility platform on the web — scalable to 1
 |-------|--------|--------|
 | **MVP** | Core architecture + 3 tools | ✅ Complete |
 | **Phase 1** | Polish & Launch | ✅ Complete |
-| **Phase 2** | Growth & new tools | 🚧 In Progress (~45%) |
+| **Phase 2** | Growth & new tools | 🚧 In Progress (~55%) |
 | **Phase 3** | Scale to 100 tools | 📋 Planned |
 | **Phase 4** | Ecosystem | 💡 Future |
 
 ```
 MVP ████████████████████ 100%
 P1  ████████████████████ 100%
-P2  █████████░░░░░░░░░░░  45%
+P2  ███████████░░░░░░░░░  55%
 ```
 
 ---
@@ -140,10 +140,12 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 **Goal:** Increase traffic, retention, and tool count  
 **Timeline:** 2–4 weeks
 
-### Live tools (6 total)
+### Live tools (8 total)
 
 | Tool | Route | Version |
 |------|-------|---------|
+| SVG-to-Code Transformer | `/svg-to-code` | v0.7.0 |
+| IMEI Checker & Device Lookup | `/imei-checker` | v0.6.1 |
 | JSON Formatter & Validator | `/json-formatter` | v0.5.0 |
 | AI Background Remover | `/bg-remover` | v0.4.0 |
 | Media Optimizer | `/media-optimizer` | v0.2.4+ |
@@ -164,6 +166,15 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 | 10 | Markdown → HTML | Dev | `marked` | 📋 |
 | 11 | Password Generator | Security | Web Crypto API | 📋 |
 | 12 | Base64 Encode/Decode | Dev | Native APIs | 📋 |
+
+### 2.1b Elite Tools Pipeline (Dev Power Tools)
+
+| Order | Tool | Stack | Status |
+|-------|------|-------|--------|
+| **6** | **SVG-to-Code Transformer** | `svgo/browser` + JSX codegen | ✅ Live |
+| **7** | Secure JWT & Crypto Debugger | Web Crypto API | 📋 Next |
+| **8** | Visual Regex Builder | Pure JS parser | 📋 |
+| **9** | WASM Local Transcriber | `whisper.wasm` | 📋 |
 
 **Adding a new tool:**
 1. Add entry to `src/lib/tools.ts` (auto-added to sitemap)
@@ -231,6 +242,19 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 ---
 
 ## Release History
+
+### v0.7.0 — SVG-to-Code Transformer (Jun 29, 2026)
+- New tool: **SVG-to-Code Transformer** (`/svg-to-code`)
+- SVGO browser optimization with size savings stats
+- React TSX + Tailwind (`currentColor`, `h-6 w-6`) codegen
+- Live preview, copy, and download
+
+### v0.6.1 — IMEI Checker TAC Database (Jun 29, 2026)
+- 22,529+ TAC device index with photos and specs (Osmocom + supplements)
+- Auto-load local database; vivo Y02t and major brands covered
+
+### v0.6.0 — IMEI Checker (Jun 29, 2026)
+- New tool: IMEI validation + TAC device lookup (`/imei-checker`)
 
 ### v0.5.0 — JSON Formatter & Validator (Jun 29, 2026)
 - New tool: **JSON Formatter & Validator** (`/json-formatter`)
@@ -338,8 +362,8 @@ NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro
 
 1. **GSC follow-up** — Resubmit sitemap (now 7 URLs); request indexing for new tools
 2. **Vercel env** — Set `NEXT_PUBLIC_SITE_URL=https://www.omniutil.pro` and redeploy
-3. **Phase 2.1** — QR Code Generator ← **next** (high traffic, tiny bundle)
-4. **Phase 2.1** — PDF Merger / Splitter (reuses `pdf-lib` from File to PDF)
+3. **Phase 2.1b** — JWT & Crypto Debugger ← **next elite tool**
+4. **Phase 2.1** — QR Code Generator (high traffic)
 5. **Production smoke test** — Run checklist for all 6 live tools
 
 ---
