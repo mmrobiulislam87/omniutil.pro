@@ -34,11 +34,11 @@ export const TOOLS: Tool[] = [
     name: "Screen Recorder",
     dashboardTitle: "HD Screen Recorder & Trimmer",
     description:
-      "Record your screen in 1080p with mic and webcam overlay — no extension, no watermark. Trim and download locally with ffmpeg.wasm. Your video never uploads.",
+      "Record screen in up to 1440p @ 60fps with mic, system audio, and webcam PiP. Pause, visual timeline trim, speed control, and ffmpeg export — no watermark, no uploads.",
     href: "/screen-recorder",
     icon: Video,
     emoji: "🎬",
-    badge: "Loom Alternative",
+    badge: "Pro Studio",
     category: "Media",
     tags: [
       "screen recorder",

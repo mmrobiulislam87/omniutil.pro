@@ -5,30 +5,69 @@ import {
   Camera,
   Circle,
   Download,
+  Film,
   Mic,
   Monitor,
+  Music,
+  Pause,
+  Play,
+  RotateCcw,
   Scissors,
+  Settings2,
   Square,
   Trash2,
   Video,
+  Volume2,
+  VolumeX,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ToolErrorBanner } from "@/components/ui/ToolStateWrapper";
+import { NudgeButton, VideoTimeline } from "@/components/screen-recorder/VideoTimeline";
 import { cn } from "@/lib/cn";
 import { downloadBlob, formatBytes } from "@/lib/format";
 import {
+  CAMERA_POSITIONS,
+  CAMERA_SIZES,
+  FRAME_RATES,
   formatRecordingTime,
+  QUALITY_PRESETS,
   startScreenRecording,
+  type CameraPosition,
+  type CameraSize,
+  type FrameRate,
+  type QualityPreset,
   type RecordingSession,
 } from "@/utils/screenRecorder";
-import { trimVideoBlob } from "@/utils/videoTrimmer";
+import {
+  EXPORT_QUALITIES,
+  exportVideo,
+  estimateExportDuration,
+  SPEED_OPTIONS,
+  type ExportQuality,
+} from "@/utils/videoTrimmer";
 
-type Phase = "idle" | "recording" | "preview" | "trimming";
+type Phase = "idle" | "countdown" | "recording" | "preview" | "exporting";
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 export function ScreenRecorder() {
   const [phase, setPhase] = useState<Phase>("idle");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [includeMic, setIncludeMic] = useState(true);
   const [includeCamera, setIncludeCamera] = useState(false);
+  const [includeSystemAudio, setIncludeSystemAudio] = useState(true);
+  const [quality, setQuality] = useState<QualityPreset>("1080p");
+  const [frameRate, setFrameRate] = useState<FrameRate>(30);
+  const [micGain, setMicGain] = useState(1);
+  const [systemGain, setSystemGain] = useState(0.85);
+  const [cameraPosition, setCameraPosition] =
+    useState<CameraPosition>("bottom-right");
+  const [cameraSize, setCameraSize] = useState<CameraSize>("md");
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -36,8 +75,14 @@ export function ScreenRecorder() {
   const [duration, setDuration] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
-  const [trimStatus, setTrimStatus] = useState("");
-  const [trimProgress, setTrimProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [loopSelection, setLoopSelection] = useState(true);
+  const [exportQuality, setExportQuality] = useState<ExportQuality>("balanced");
+  const [exportSpeed, setExportSpeed] = useState(1);
+  const [muteExport, setMuteExport] = useState(false);
+  const [exportStatus, setExportStatus] = useState("");
+  const [exportProgress, setExportProgress] = useState(0);
 
   const sessionRef = useRef<RecordingSession | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -54,6 +99,16 @@ export function ScreenRecorder() {
     };
   }, [videoUrl, revokeVideoUrl]);
 
+  const setBlobPreview = useCallback(
+    (blob: Blob) => {
+      revokeVideoUrl(videoUrl);
+      const url = URL.createObjectURL(blob);
+      setRawBlob(blob);
+      setVideoUrl(url);
+    },
+    [videoUrl, revokeVideoUrl],
+  );
+
   const clearAll = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     sessionRef.current = null;
@@ -63,31 +118,84 @@ export function ScreenRecorder() {
     setDuration(0);
     setTrimStart(0);
     setTrimEnd(0);
+    setCurrentTime(0);
     setElapsedMs(0);
-    setTrimStatus("");
-    setTrimProgress(0);
+    setExportStatus("");
+    setExportProgress(0);
+    setIsPaused(false);
+    setCountdown(null);
     setError(null);
     setPhase("idle");
   }, [videoUrl, revokeVideoUrl]);
 
+  const recorderOptions = useCallback(
+    () => ({
+      includeMic,
+      includeCamera,
+      includeSystemAudio,
+      quality,
+      frameRate,
+      micGain,
+      systemGain,
+      cameraPosition,
+      cameraSize,
+      onBeforeStart: async () => {
+        setPhase("countdown");
+        for (let i = 3; i >= 1; i--) {
+          setCountdown(i);
+          await sleep(1000);
+        }
+        setCountdown(null);
+        setPhase("recording");
+      },
+    }),
+    [
+      includeMic,
+      includeCamera,
+      includeSystemAudio,
+      quality,
+      frameRate,
+      micGain,
+      systemGain,
+      cameraPosition,
+      cameraSize,
+    ],
+  );
+
   const startRecording = useCallback(async () => {
     setError(null);
     try {
-      const session = await startScreenRecording({ includeMic, includeCamera });
+      const session = await startScreenRecording(recorderOptions());
       sessionRef.current = session;
-      setPhase("recording");
+      setIsPaused(false);
       setElapsedMs(0);
       timerRef.current = setInterval(() => {
-        setElapsedMs(session.getElapsedMs());
-      }, 250);
+        if (sessionRef.current && !sessionRef.current.isPaused()) {
+          setElapsedMs(sessionRef.current.getElapsedMs());
+        }
+      }, 100);
     } catch (err) {
+      setCountdown(null);
+      setPhase("idle");
       setError(
         err instanceof Error
           ? err.message
           : "Could not start screen recording. Allow screen share when prompted.",
       );
     }
-  }, [includeMic, includeCamera]);
+  }, [recorderOptions]);
+
+  const togglePause = useCallback(() => {
+    const session = sessionRef.current;
+    if (!session) return;
+    if (session.isPaused()) {
+      session.resume();
+      setIsPaused(false);
+    } else {
+      session.pause();
+      setIsPaused(true);
+    }
+  }, []);
 
   const stopRecording = useCallback(async () => {
     const session = sessionRef.current;
@@ -101,16 +209,14 @@ export function ScreenRecorder() {
     try {
       const blob = await session.stop();
       sessionRef.current = null;
-      revokeVideoUrl(videoUrl);
-      const url = URL.createObjectURL(blob);
-      setRawBlob(blob);
-      setVideoUrl(url);
+      setBlobPreview(blob);
       setPhase("preview");
+      setIsPaused(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save recording.");
       setPhase("idle");
     }
-  }, [videoUrl, revokeVideoUrl]);
+  }, [setBlobPreview]);
 
   const onPreviewLoaded = useCallback(() => {
     const video = previewRef.current;
@@ -119,65 +225,129 @@ export function ScreenRecorder() {
     setDuration(d);
     setTrimStart(0);
     setTrimEnd(d);
+    setCurrentTime(0);
   }, []);
 
-  const downloadRaw = useCallback(() => {
-    if (!rawBlob) return;
-    downloadBlob(rawBlob, `omniutil-recording-${Date.now()}.webm`);
-  }, [rawBlob]);
-
-  const exportTrimmed = useCallback(async () => {
-    if (!rawBlob) return;
-    setPhase("trimming");
-    setError(null);
-    setTrimProgress(0);
-    setTrimStatus("Preparing…");
-
-    try {
-      const trimmed = await trimVideoBlob(
-        rawBlob,
-        trimStart,
-        trimEnd,
-        (message, ratio) => {
-          setTrimStatus(message);
-          if (ratio != null) setTrimProgress(ratio);
-        },
-      );
-      downloadBlob(trimmed, `omniutil-trimmed-${Date.now()}.webm`);
-      setTrimStatus("Trimmed video downloaded.");
-      setPhase("preview");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Trim failed.");
-      setPhase("preview");
+  const onTimeUpdate = useCallback(() => {
+    const video = previewRef.current;
+    if (!video) return;
+    setCurrentTime(video.currentTime);
+    if (loopSelection && video.currentTime >= trimEnd - 0.05) {
+      video.currentTime = trimStart;
     }
-  }, [rawBlob, trimStart, trimEnd]);
+  }, [loopSelection, trimEnd, trimStart]);
 
-  const formatTimeInput = (sec: number) => {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    const ms = Math.floor((sec % 1) * 10);
-    return `${m}:${String(s).padStart(2, "0")}.${ms}`;
-  };
+  const seek = useCallback((t: number) => {
+    const video = previewRef.current;
+    if (!video) return;
+    video.currentTime = t;
+    setCurrentTime(t);
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    const video = previewRef.current;
+    if (!video) return;
+    if (video.paused) {
+      if (video.currentTime < trimStart || video.currentTime >= trimEnd) {
+        video.currentTime = trimStart;
+      }
+      void video.play();
+      setIsPlaying(true);
+    } else {
+      video.pause();
+      setIsPlaying(false);
+    }
+  }, [trimStart, trimEnd]);
+
+  const nudge = useCallback(
+    (target: "start" | "end", delta: number) => {
+      if (target === "start") {
+        setTrimStart((s) => Math.max(0, Math.min(s + delta, trimEnd - 0.25)));
+      } else {
+        setTrimEnd((e) =>
+          Math.min(duration, Math.max(e + delta, trimStart + 0.25)),
+        );
+      }
+    },
+    [duration, trimEnd, trimStart],
+  );
+
+  const runExport = useCallback(
+    async (mode: "video" | "audio", download = true) => {
+      if (!rawBlob) return;
+      setPhase("exporting");
+      setError(null);
+      setExportProgress(0);
+      setExportStatus("Preparing export…");
+
+      try {
+        const result = await exportVideo(
+          rawBlob,
+          {
+            startSec: trimStart,
+            endSec: trimEnd,
+            muteAudio: muteExport,
+            speed: exportSpeed,
+            quality: exportQuality,
+            mode,
+          },
+          (message, ratio) => {
+            setExportStatus(message);
+            if (ratio != null) setExportProgress(ratio);
+          },
+        );
+
+        const ext = mode === "audio" ? "webm" : "webm";
+        const prefix = mode === "audio" ? "omniutil-audio" : "omniutil-export";
+        if (download) {
+          downloadBlob(result, `${prefix}-${Date.now()}.${ext}`);
+          setExportStatus("Download started.");
+        } else {
+          setBlobPreview(result);
+          setExportStatus("Applied to preview.");
+        }
+        setPhase("preview");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Export failed.");
+        setPhase("preview");
+      }
+    },
+    [
+      rawBlob,
+      trimStart,
+      trimEnd,
+      muteExport,
+      exportSpeed,
+      exportQuality,
+      setBlobPreview,
+    ],
+  );
+
+  const exportDuration = estimateExportDuration(
+    trimStart,
+    trimEnd,
+    exportSpeed,
+  );
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-gray-300">
         <p className="flex items-center gap-2 font-medium text-red-300">
           <Video className="h-4 w-4" />
-          MediaRecorder · ffmpeg.wasm trim
+          Pro Studio · MediaRecorder + ffmpeg.wasm
         </p>
         <p className="mt-1 text-xs leading-relaxed text-gray-400">
-          Record your screen in up to 1080p with optional mic and webcam
-          overlay. No extension, no watermark, no uploads — trim and download
-          entirely in your browser. First trim loads ffmpeg (~30 MB) from CDN.
+          Up to 1440p @ 60fps with balanced mic/system audio, webcam PiP, pause
+          resume, visual timeline editor, speed control, and local export — no
+          extension, no watermark, no uploads.
         </p>
       </div>
 
       {phase === "idle" && (
-        <div className="space-y-4 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-6">
+        <div className="space-y-5 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-6">
           <p className="text-sm text-gray-400">
-            Choose sources, then start recording. Your browser will ask which
-            screen, window, or tab to share.
+            Configure your session, then share a screen, window, or tab. A short
+            countdown starts before capture begins.
           </p>
 
           <div className="flex flex-wrap gap-3">
@@ -188,12 +358,119 @@ export function ScreenRecorder() {
               label="Microphone"
             />
             <ToggleChip
+              active={includeSystemAudio}
+              onClick={() => setIncludeSystemAudio((v) => !v)}
+              icon={Volume2}
+              label="System audio"
+            />
+            <ToggleChip
               active={includeCamera}
               onClick={() => setIncludeCamera((v) => !v)}
               icon={Camera}
-              label="Webcam overlay"
+              label="Webcam PiP"
             />
           </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5 text-sm">
+              <span className="text-gray-500">Quality</span>
+              <select
+                value={quality}
+                onChange={(e) => setQuality(e.target.value as QualityPreset)}
+                className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-gray-200"
+              >
+                {QUALITY_PRESETS.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {q.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="text-gray-500">Frame rate</span>
+              <select
+                value={frameRate}
+                onChange={(e) =>
+                  setFrameRate(Number(e.target.value) as FrameRate)
+                }
+                className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-gray-200"
+              >
+                {FRAME_RATES.map((fps) => (
+                  <option key={fps} value={fps}>
+                    {fps} fps
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="flex items-center gap-2 text-xs font-medium text-gray-500 hover:text-gray-300"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+            {showAdvanced ? "Hide" : "Show"} advanced audio & camera
+          </button>
+
+          {showAdvanced && (
+            <div className="space-y-4 rounded-lg border border-gray-800/80 bg-gray-900/30 p-4">
+              <SliderField
+                label="Mic volume"
+                value={micGain}
+                min={0}
+                max={2}
+                step={0.05}
+                onChange={setMicGain}
+                format={(v) => `${Math.round(v * 100)}%`}
+              />
+              <SliderField
+                label="System audio"
+                value={systemGain}
+                min={0}
+                max={2}
+                step={0.05}
+                onChange={setSystemGain}
+                format={(v) => `${Math.round(v * 100)}%`}
+              />
+              {includeCamera && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1.5 text-sm">
+                    <span className="text-gray-500">Camera position</span>
+                    <select
+                      value={cameraPosition}
+                      onChange={(e) =>
+                        setCameraPosition(e.target.value as CameraPosition)
+                      }
+                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200"
+                    >
+                      {CAMERA_POSITIONS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1.5 text-sm">
+                    <span className="text-gray-500">Camera size</span>
+                    <select
+                      value={cameraSize}
+                      onChange={(e) =>
+                        setCameraSize(e.target.value as CameraSize)
+                      }
+                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200"
+                    >
+                      {CAMERA_SIZES.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={startRecording} className="gap-2">
@@ -202,139 +479,301 @@ export function ScreenRecorder() {
             </Button>
             <span className="flex items-center gap-1.5 text-xs text-gray-500">
               <Monitor className="h-3.5 w-3.5" />
-              Screen + system audio when supported
+              {quality} · {frameRate}fps · unlimited length
             </span>
           </div>
+        </div>
+      )}
+
+      {(phase === "countdown" || countdown != null) && (
+        <div className="flex min-h-[200px] items-center justify-center rounded-xl border border-red-500/30 bg-red-500/5">
+          <span className="animate-pulse text-7xl font-black tabular-nums text-red-400">
+            {countdown}
+          </span>
         </div>
       )}
 
       {phase === "recording" && (
-        <div className="space-y-4 rounded-xl border border-red-500/30 bg-red-500/5 p-6 text-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-red-500/10 px-4 py-1.5 text-sm font-medium text-red-300">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+        <div className="space-y-4 rounded-xl border border-red-500/30 bg-red-500/5 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-red-500/10 px-4 py-1.5 text-sm font-medium text-red-300">
+              <span className="relative flex h-2.5 w-2.5">
+                {!isPaused && (
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                )}
+                <span
+                  className={cn(
+                    "relative inline-flex h-2.5 w-2.5 rounded-full",
+                    isPaused ? "bg-amber-500" : "bg-red-500",
+                  )}
+                />
+              </span>
+              {isPaused ? "PAUSED" : "REC"} ·{" "}
+              {formatRecordingTime(elapsedMs, true)}
+            </div>
+            <span className="rounded border border-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wider text-gray-500">
+              {quality} · {frameRate}fps
             </span>
-            REC · {formatRecordingTime(elapsedMs)}
           </div>
-          <p className="text-xs text-gray-500">
-            Click Stop when finished, or end the screen share from your browser
-            UI.
-          </p>
-          <Button variant="secondary" onClick={stopRecording} className="gap-2">
-            <Square className="h-4 w-4 fill-current" />
-            Stop recording
-          </Button>
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={togglePause} className="gap-2">
+              {isPaused ? (
+                <Play className="h-4 w-4" />
+              ) : (
+                <Pause className="h-4 w-4" />
+              )}
+              {isPaused ? "Resume" : "Pause"}
+            </Button>
+            <Button onClick={stopRecording} className="gap-2">
+              <Square className="h-4 w-4 fill-current" />
+              Stop & edit
+            </Button>
+          </div>
         </div>
       )}
 
-      {(phase === "preview" || phase === "trimming") && videoUrl && (
-        <div className="space-y-4">
+      {(phase === "preview" || phase === "exporting") && videoUrl && (
+        <div className="space-y-5">
           <div className="overflow-hidden rounded-xl border border-gray-800 bg-black">
             <video
               ref={previewRef}
               src={videoUrl}
-              controls
               playsInline
               onLoadedMetadata={onPreviewLoaded}
-              className="max-h-[min(70vh,520px)] w-full"
+              onTimeUpdate={onTimeUpdate}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              className="max-h-[min(60vh,480px)] w-full"
             />
           </div>
 
           {rawBlob && (
             <p className="text-xs text-gray-500">
-              Original size: {formatBytes(rawBlob.size)}
-              {duration > 0 && ` · ${formatRecordingTime(duration * 1000)}`}
+              {formatBytes(rawBlob.size)}
+              {duration > 0 &&
+                ` · ${formatRecordingTime(duration * 1000)} total`}
             </p>
           )}
 
           {duration > 0 && (
-            <div className="space-y-4 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                <Scissors className="h-3.5 w-3.5" />
-                Trim segment
-              </p>
+            <>
+              <div className="space-y-3 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    <Scissors className="h-3.5 w-3.5" />
+                    Timeline editor
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={togglePlay}
+                      disabled={phase === "exporting"}
+                    >
+                      {isPlaying ? (
+                        <Pause className="h-4 w-4" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                      Preview
+                    </Button>
+                    <ToggleChip
+                      active={loopSelection}
+                      onClick={() => setLoopSelection((v) => !v)}
+                      icon={RotateCcw}
+                      label="Loop selection"
+                      compact
+                    />
+                  </div>
+                </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="space-y-1.5 text-sm">
-                  <span className="text-gray-400">Start</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={duration}
-                    step={0.1}
-                    value={trimStart}
-                    disabled={phase === "trimming"}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setTrimStart(Math.min(v, trimEnd - 0.1));
-                    }}
-                    className="w-full accent-blue-500"
-                  />
-                  <span className="font-mono text-xs text-gray-500">
-                    {formatTimeInput(trimStart)}
+                <VideoTimeline
+                  duration={duration}
+                  start={trimStart}
+                  end={trimEnd}
+                  currentTime={currentTime}
+                  disabled={phase === "exporting"}
+                  onStartChange={setTrimStart}
+                  onEndChange={setTrimEnd}
+                  onSeek={seek}
+                />
+
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="mr-1 self-center text-[10px] text-gray-600">
+                    Start
                   </span>
-                </label>
-                <label className="space-y-1.5 text-sm">
-                  <span className="text-gray-400">End</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={duration}
-                    step={0.1}
-                    value={trimEnd}
-                    disabled={phase === "trimming"}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setTrimEnd(Math.max(v, trimStart + 0.1));
-                    }}
-                    className="w-full accent-blue-500"
+                  <NudgeButton
+                    label="-1s"
+                    disabled={phase === "exporting"}
+                    onClick={() => nudge("start", -1)}
                   />
-                  <span className="font-mono text-xs text-gray-500">
-                    {formatTimeInput(trimEnd)}
+                  <NudgeButton
+                    label="-0.1s"
+                    disabled={phase === "exporting"}
+                    onClick={() => nudge("start", -0.1)}
+                  />
+                  <NudgeButton
+                    label="+0.1s"
+                    disabled={phase === "exporting"}
+                    onClick={() => nudge("start", 0.1)}
+                  />
+                  <NudgeButton
+                    label="+1s"
+                    disabled={phase === "exporting"}
+                    onClick={() => nudge("start", 1)}
+                  />
+                  <span className="mx-2 self-center text-gray-700">|</span>
+                  <span className="mr-1 self-center text-[10px] text-gray-600">
+                    End
                   </span>
-                </label>
+                  <NudgeButton
+                    label="-1s"
+                    disabled={phase === "exporting"}
+                    onClick={() => nudge("end", -1)}
+                  />
+                  <NudgeButton
+                    label="-0.1s"
+                    disabled={phase === "exporting"}
+                    onClick={() => nudge("end", -0.1)}
+                  />
+                  <NudgeButton
+                    label="+0.1s"
+                    disabled={phase === "exporting"}
+                    onClick={() => nudge("end", 0.1)}
+                  />
+                  <NudgeButton
+                    label="+1s"
+                    disabled={phase === "exporting"}
+                    onClick={() => nudge("end", 1)}
+                  />
+                </div>
               </div>
 
-              <p className="text-xs text-gray-500">
-                Selection: {formatTimeInput(trimEnd - trimStart)} (
-                {formatTimeInput(trimStart)} → {formatTimeInput(trimEnd)})
-              </p>
-            </div>
+              <div className="space-y-4 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
+                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  <Film className="h-3.5 w-3.5" />
+                  Export settings
+                </p>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <label className="space-y-1.5 text-sm">
+                    <span className="text-gray-500">Quality</span>
+                    <select
+                      value={exportQuality}
+                      disabled={phase === "exporting"}
+                      onChange={(e) =>
+                        setExportQuality(e.target.value as ExportQuality)
+                      }
+                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200"
+                    >
+                      {EXPORT_QUALITIES.map((q) => (
+                        <option key={q.id} value={q.id}>
+                          {q.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1.5 text-sm">
+                    <span className="text-gray-500">Speed</span>
+                    <select
+                      value={exportSpeed}
+                      disabled={phase === "exporting"}
+                      onChange={(e) =>
+                        setExportSpeed(Number(e.target.value))
+                      }
+                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200"
+                    >
+                      {SPEED_OPTIONS.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex items-end">
+                    <ToggleChip
+                      active={muteExport}
+                      onClick={() => setMuteExport((v) => !v)}
+                      icon={muteExport ? VolumeX : Volume2}
+                      label="Mute audio"
+                    />
+                  </div>
+                </div>
+
+                <p className="text-xs text-gray-500">
+                  Output length:{" "}
+                  <span className="font-mono text-gray-400">
+                    {formatRecordingTime(exportDuration * 1000, true)}
+                  </span>
+                  {exportSpeed !== 1 && (
+                    <span className="ml-1 text-amber-500/80">
+                      ({exportSpeed}× speed)
+                    </span>
+                  )}
+                </p>
+              </div>
+            </>
           )}
 
-          {phase === "trimming" && (
+          {phase === "exporting" && (
             <div className="space-y-2 rounded-xl border border-gray-800 bg-[#0B0F19]/50 p-4">
               <div className="flex justify-between text-xs text-gray-500">
-                <span>{trimStatus}</span>
-                <span>{trimProgress}%</span>
+                <span>{exportStatus}</span>
+                <span>{exportProgress}%</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-gray-800">
                 <div
                   className="h-full rounded-full bg-blue-500 transition-all"
-                  style={{ width: `${trimProgress}%` }}
+                  style={{ width: `${exportProgress}%` }}
                 />
               </div>
             </div>
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button onClick={downloadRaw} disabled={phase === "trimming"}>
+            <Button
+              onClick={() => runExport("video", true)}
+              disabled={phase === "exporting" || duration <= 0}
+              className="gap-2"
+            >
               <Download className="h-4 w-4" />
-              Download full WebM
+              Export video
             </Button>
             <Button
               variant="secondary"
-              onClick={exportTrimmed}
-              disabled={phase === "trimming" || duration <= 0}
+              onClick={() => runExport("video", false)}
+              disabled={phase === "exporting" || duration <= 0}
+              className="gap-2"
             >
-              <Scissors className="h-4 w-4" />
-              Export trimmed
+              <Zap className="h-4 w-4" />
+              Apply to preview
             </Button>
+            <Button
+              variant="secondary"
+              onClick={() => runExport("audio", true)}
+              disabled={phase === "exporting" || duration <= 0 || muteExport}
+              className="gap-2"
+            >
+              <Music className="h-4 w-4" />
+              Extract audio
+            </Button>
+            {rawBlob && (
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  downloadBlob(rawBlob, `omniutil-raw-${Date.now()}.webm`)
+                }
+                disabled={phase === "exporting"}
+              >
+                <Download className="h-4 w-4" />
+                Raw WebM
+              </Button>
+            )}
             <Button
               variant="ghost"
               onClick={clearAll}
-              disabled={phase === "trimming"}
+              disabled={phase === "exporting"}
             >
               <Trash2 className="h-4 w-4" />
               New recording
@@ -353,25 +792,64 @@ function ToggleChip({
   onClick,
   icon: Icon,
   label,
+  compact,
 }: {
   active: boolean;
   onClick: () => void;
   icon: typeof Mic;
   label: string;
+  compact?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition",
+        "inline-flex items-center gap-2 rounded-lg border text-sm transition",
+        compact ? "px-2.5 py-1.5 text-xs" : "px-3 py-2",
         active
           ? "border-blue-500/50 bg-blue-500/10 text-blue-300"
           : "border-gray-800 bg-gray-900/50 text-gray-400 hover:border-gray-700",
       )}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
       {label}
     </button>
+  );
+}
+
+function SliderField({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  format,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (v: number) => void;
+  format: (v: number) => string;
+}) {
+  return (
+    <label className="block space-y-1.5 text-sm">
+      <div className="flex justify-between text-gray-500">
+        <span>{label}</span>
+        <span className="font-mono text-xs text-gray-400">{format(value)}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-blue-500"
+      />
+    </label>
   );
 }

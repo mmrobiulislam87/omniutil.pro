@@ -1,11 +1,48 @@
+export type QualityPreset = "720p" | "1080p" | "1440p";
+export type FrameRate = 30 | 60;
+export type CameraPosition =
+  | "bottom-right"
+  | "bottom-left"
+  | "top-right"
+  | "top-left";
+export type CameraSize = "sm" | "md" | "lg";
+
 export type RecorderOptions = {
   includeMic: boolean;
   includeCamera: boolean;
+  includeSystemAudio: boolean;
+  quality: QualityPreset;
+  frameRate: FrameRate;
+  micGain: number;
+  systemGain: number;
+  cameraPosition: CameraPosition;
+  cameraSize: CameraSize;
+  /** e.g. 3-2-1 countdown before MediaRecorder starts */
+  onBeforeStart?: () => Promise<void>;
 };
 
 export type RecordingSession = {
   stop: () => Promise<Blob>;
+  pause: () => void;
+  resume: () => void;
+  isPaused: () => boolean;
   getElapsedMs: () => number;
+  getPausedMs: () => number;
+};
+
+const QUALITY_MAP: Record<
+  QualityPreset,
+  { width: number; height: number; bitrate: number }
+> = {
+  "720p": { width: 1280, height: 720, bitrate: 1_500_000 },
+  "1080p": { width: 1920, height: 1080, bitrate: 2_500_000 },
+  "1440p": { width: 2560, height: 1440, bitrate: 4_000_000 },
+};
+
+const CAMERA_SCALE: Record<CameraSize, number> = {
+  sm: 0.16,
+  md: 0.22,
+  lg: 0.28,
 };
 
 function pickMimeType(): string {
@@ -14,24 +51,39 @@ function pickMimeType(): string {
     "video/webm;codecs=vp8,opus",
     "video/webm",
   ];
-  return candidates.find((t) => MediaRecorder.isTypeSupported(t)) ?? "video/webm";
+  return (
+    candidates.find((t) => MediaRecorder.isTypeSupported(t)) ?? "video/webm"
+  );
 }
 
-function mixAudioTracks(tracks: MediaStreamTrack[]): MediaStreamTrack[] {
-  if (tracks.length === 0) return [];
-  if (tracks.length === 1) return tracks;
+type AudioMixer = {
+  tracks: MediaStreamTrack[];
+  context: AudioContext;
+  close: () => void;
+};
 
-  const audioContext = new AudioContext();
-  const destination = audioContext.createMediaStreamDestination();
+function mixAudioTracks(
+  sources: { track: MediaStreamTrack; gain: number }[],
+): AudioMixer | null {
+  const valid = sources.filter((s) => s.track.readyState === "live");
+  if (valid.length === 0) return null;
 
-  for (const track of tracks) {
-    const source = audioContext.createMediaStreamSource(
-      new MediaStream([track]),
-    );
-    source.connect(destination);
+  const context = new AudioContext();
+  const destination = context.createMediaStreamDestination();
+
+  for (const { track, gain } of valid) {
+    const source = context.createMediaStreamSource(new MediaStream([track]));
+    const gainNode = context.createGain();
+    gainNode.gain.value = Math.max(0, Math.min(2, gain));
+    source.connect(gainNode);
+    gainNode.connect(destination);
   }
 
-  return destination.stream.getAudioTracks();
+  return {
+    tracks: destination.stream.getAudioTracks(),
+    context,
+    close: () => void context.close(),
+  };
 }
 
 type Compositor = {
@@ -39,48 +91,108 @@ type Compositor = {
   stop: () => void;
 };
 
+function cameraRect(
+  width: number,
+  height: number,
+  camW: number,
+  camH: number,
+  position: CameraPosition,
+  pad: number,
+) {
+  const positions: Record<CameraPosition, { x: number; y: number }> = {
+    "bottom-right": { x: width - camW - pad, y: height - camH - pad },
+    "bottom-left": { x: pad, y: height - camH - pad },
+    "top-right": { x: width - camW - pad, y: pad },
+    "top-left": { x: pad, y: pad },
+  };
+  return positions[position];
+}
+
 function startCompositor(
   screenVideo: HTMLVideoElement,
   cameraVideo: HTMLVideoElement | null,
   width: number,
   height: number,
+  frameRate: FrameRate,
+  cameraPosition: CameraPosition,
+  cameraSize: CameraSize,
 ): Compositor {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { alpha: false });
   if (!ctx) throw new Error("Canvas 2D context unavailable.");
 
+  let stopped = false;
   let frameId = 0;
+
   const draw = () => {
-    ctx.drawImage(screenVideo, 0, 0, width, height);
+    if (stopped) return;
+
+    if (screenVideo.readyState >= 2) {
+      ctx.drawImage(screenVideo, 0, 0, width, height);
+    }
+
     if (cameraVideo && cameraVideo.readyState >= 2) {
-      const pw = Math.round(width * 0.22);
-      const ph = Math.round((pw * cameraVideo.videoHeight) / cameraVideo.videoWidth || pw * 0.75);
-      const pad = 16;
-      const x = width - pw - pad;
-      const y = height - ph - pad;
+      const scale = CAMERA_SCALE[cameraSize];
+      const pw = Math.round(width * scale);
+      const ph = Math.round(
+        (pw * cameraVideo.videoHeight) / cameraVideo.videoWidth || pw * 0.75,
+      );
+      const pad = Math.round(width * 0.012);
+      const { x, y } = cameraRect(
+        width,
+        height,
+        pw,
+        ph,
+        cameraPosition,
+        pad,
+      );
+
       ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.45)";
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 4;
       ctx.beginPath();
       if (typeof ctx.roundRect === "function") {
-        ctx.roundRect(x, y, pw, ph, 12);
+        ctx.roundRect(x, y, pw, ph, 14);
       } else {
         ctx.rect(x, y, pw, ph);
       }
+      ctx.fillStyle = "#000";
+      ctx.fill();
       ctx.clip();
       ctx.drawImage(cameraVideo, x, y, pw, ph);
       ctx.restore();
-      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+
+      ctx.strokeStyle = "rgba(255,255,255,0.5)";
       ctx.lineWidth = 2;
-      ctx.stroke();
+      if (typeof ctx.roundRect === "function") {
+        ctx.beginPath();
+        ctx.roundRect(x, y, pw, ph, 14);
+        ctx.stroke();
+      }
     }
-    frameId = requestAnimationFrame(draw);
+
+    if ("requestVideoFrameCallback" in screenVideo) {
+      (
+        screenVideo as HTMLVideoElement & {
+          requestVideoFrameCallback: (cb: () => void) => number;
+        }
+      ).requestVideoFrameCallback(draw);
+    } else {
+      frameId = requestAnimationFrame(draw);
+    }
   };
+
   draw();
 
   return {
-    stream: canvas.captureStream(30),
-    stop: () => cancelAnimationFrame(frameId),
+    stream: canvas.captureStream(frameRate),
+    stop: () => {
+      stopped = true;
+      cancelAnimationFrame(frameId);
+    },
   };
 }
 
@@ -100,22 +212,31 @@ export async function startScreenRecording(
     );
   }
 
+  const spec = QUALITY_MAP[options.quality];
+
   const displayStream = await navigator.mediaDevices.getDisplayMedia({
     video: {
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      frameRate: { ideal: 30 },
+      width: { ideal: spec.width },
+      height: { ideal: spec.height },
+      frameRate: { ideal: options.frameRate },
     },
-    audio: true,
+    audio: options.includeSystemAudio,
   });
 
   const streamsToStop: MediaStream[] = [displayStream];
   let micStream: MediaStream | null = null;
   let cameraStream: MediaStream | null = null;
+  let audioMixer: AudioMixer | null = null;
 
   try {
     if (options.includeMic) {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamsToStop.push(micStream);
     }
     if (options.includeCamera) {
@@ -124,6 +245,7 @@ export async function startScreenRecording(
           width: { ideal: 640 },
           height: { ideal: 360 },
           facingMode: "user",
+          frameRate: { ideal: 30 },
         },
         audio: false,
       });
@@ -133,8 +255,8 @@ export async function startScreenRecording(
     const screenVideo = document.createElement("video");
     await attachStream(screenVideo, displayStream);
 
-    const width = screenVideo.videoWidth || 1920;
-    const height = screenVideo.videoHeight || 1080;
+    const width = screenVideo.videoWidth || spec.width;
+    const height = screenVideo.videoHeight || spec.height;
 
     let videoStream: MediaStream;
     let compositor: Compositor | null = null;
@@ -142,30 +264,50 @@ export async function startScreenRecording(
     if (cameraStream) {
       const cameraVideo = document.createElement("video");
       await attachStream(cameraVideo, cameraStream);
-      compositor = startCompositor(screenVideo, cameraVideo, width, height);
+      compositor = startCompositor(
+        screenVideo,
+        cameraVideo,
+        width,
+        height,
+        options.frameRate,
+        options.cameraPosition,
+        options.cameraSize,
+      );
       videoStream = compositor.stream;
     } else {
       videoStream = new MediaStream(displayStream.getVideoTracks());
     }
 
-    const audioTracks = mixAudioTracks([
-      ...displayStream.getAudioTracks(),
-      ...(micStream?.getAudioTracks() ?? []),
-    ]);
+    const audioSources: { track: MediaStreamTrack; gain: number }[] = [];
+    if (options.includeSystemAudio) {
+      for (const track of displayStream.getAudioTracks()) {
+        audioSources.push({ track, gain: options.systemGain });
+      }
+    }
+    if (micStream) {
+      for (const track of micStream.getAudioTracks()) {
+        audioSources.push({ track, gain: options.micGain });
+      }
+    }
+
+    audioMixer = mixAudioTracks(audioSources);
 
     const finalStream = new MediaStream([
       ...videoStream.getVideoTracks(),
-      ...audioTracks,
+      ...(audioMixer?.tracks ?? []),
     ]);
 
     const mimeType = pickMimeType();
     const chunks: Blob[] = [];
     const recorder = new MediaRecorder(finalStream, {
       mimeType,
-      videoBitsPerSecond: 2_500_000,
+      videoBitsPerSecond: spec.bitrate,
+      audioBitsPerSecond: 128_000,
     });
 
-    const startedAt = Date.now();
+    let startedAt = Date.now();
+    let pausedAt: number | null = null;
+    let totalPausedMs = 0;
 
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) chunks.push(event.data);
@@ -178,7 +320,8 @@ export async function startScreenRecording(
       };
     });
 
-    recorder.start(1000);
+    await options.onBeforeStart?.();
+    recorder.start(250);
 
     const stopDisplayTrack = displayStream.getVideoTracks()[0];
     stopDisplayTrack?.addEventListener("ended", () => {
@@ -186,11 +329,32 @@ export async function startScreenRecording(
     });
 
     return {
-      getElapsedMs: () => Date.now() - startedAt,
+      getElapsedMs: () => {
+        const now = Date.now();
+        const pauseExtra =
+          pausedAt != null ? now - pausedAt : 0;
+        return now - startedAt - totalPausedMs - pauseExtra;
+      },
+      getPausedMs: () => totalPausedMs,
+      isPaused: () => recorder.state === "paused",
+      pause: () => {
+        if (recorder.state !== "recording") return;
+        recorder.pause();
+        pausedAt = Date.now();
+      },
+      resume: () => {
+        if (recorder.state !== "paused" || pausedAt == null) return;
+        totalPausedMs += Date.now() - pausedAt;
+        pausedAt = null;
+        recorder.resume();
+      },
       stop: async () => {
-        if (recorder.state === "recording") recorder.stop();
+        if (recorder.state === "recording" || recorder.state === "paused") {
+          recorder.stop();
+        }
         compositor?.stop();
         screenVideo.srcObject = null;
+        audioMixer?.close();
         for (const stream of streamsToStop) {
           for (const track of stream.getTracks()) track.stop();
         }
@@ -199,6 +363,7 @@ export async function startScreenRecording(
       },
     };
   } catch (error) {
+    audioMixer?.close();
     for (const stream of streamsToStop) {
       for (const track of stream.getTracks()) track.stop();
     }
@@ -206,13 +371,37 @@ export async function startScreenRecording(
   }
 }
 
-export function formatRecordingTime(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
+export function formatRecordingTime(ms: number, showMs = false): string {
+  const totalSec = ms / 1000;
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
+  const s = Math.floor(totalSec % 60);
+  const frac = showMs
+    ? `.${String(Math.floor((totalSec % 1) * 10))}`
+    : "";
   if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}${frac}`;
   }
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}${frac}`;
 }
+
+export const QUALITY_PRESETS: { id: QualityPreset; label: string }[] = [
+  { id: "720p", label: "720p HD" },
+  { id: "1080p", label: "1080p Full HD" },
+  { id: "1440p", label: "1440p QHD" },
+];
+
+export const FRAME_RATES: FrameRate[] = [30, 60];
+
+export const CAMERA_POSITIONS: { id: CameraPosition; label: string }[] = [
+  { id: "bottom-right", label: "Bottom right" },
+  { id: "bottom-left", label: "Bottom left" },
+  { id: "top-right", label: "Top right" },
+  { id: "top-left", label: "Top left" },
+];
+
+export const CAMERA_SIZES: { id: CameraSize; label: string }[] = [
+  { id: "sm", label: "Small" },
+  { id: "md", label: "Medium" },
+  { id: "lg", label: "Large" },
+];
