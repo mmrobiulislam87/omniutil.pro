@@ -103,7 +103,20 @@ export async function trimVideoInBrowser(
 
   onProgress?.("Trimming in browser…", 30);
   recorder.start(200);
-  await video.play();
+
+  try {
+    await video.play();
+  } catch {
+    video.muted = true;
+    try {
+      await video.play();
+    } catch {
+      URL.revokeObjectURL(url);
+      throw new Error(
+        "Browser playback blocked. Click Export again or use a shorter clip.",
+      );
+    }
+  }
 
   const clipMs = (endSec - startSec) * 1000;
   const started = performance.now();

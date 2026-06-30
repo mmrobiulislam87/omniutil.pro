@@ -255,7 +255,13 @@ export function ProStudioEditor({
           setExportStatus("Applied to preview.");
         }
       } catch (err) {
-        onError(err instanceof Error ? err.message : "Export failed.");
+        const message =
+          err instanceof Error
+            ? err.message
+            : typeof err === "string"
+              ? err
+              : "Export failed. Try Balanced preset or download raw WebM.";
+        onError(message);
       } finally {
         onExportingChange(false);
       }
