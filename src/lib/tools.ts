@@ -258,7 +258,7 @@ export const TOOLS: Tool[] = [
     href: "/sheet-extractor",
     icon: Images,
     emoji: "🪄",
-    badge: "v1.2 Smart Target",
+    badge: "v1.3 Iframe Shield",
     category: "Utility",
     tags: [
       "sheet extractor",

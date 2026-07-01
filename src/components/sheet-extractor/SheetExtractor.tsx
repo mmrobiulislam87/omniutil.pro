@@ -10,7 +10,7 @@ const HUB_ORIGIN = new URL(siteConfig.url).origin;
 
 function buildBookmarkletCode(): string {
   const hub = absoluteUrl("/sheet-extractor");
-  return `javascript:(function(){const hub='${hub}';const origin='${HUB_ORIGIN}';function docs(){const d=[document];document.querySelectorAll('iframe').forEach(f=>{try{const x=f.contentDocument||f.contentWindow.document;if(x)d.push(x);}catch(e){}});return d;}function q(s){let o=[];docs().forEach(doc=>o.push(...doc.querySelectorAll(s)));return o;}function vis(el){const r=el.getBoundingClientRect();return r.width>0&&r.height>0;}function bigC(c){const r=c.getBoundingClientRect();return(r.width>300||c.width>300)&&(r.height>100||c.height>100);}function bigI(i){return(i.offsetWidth>300||i.naturalWidth>300)&&vis(i);}function inModal(el){try{return!!el.closest('.modal-content,.modal.show,.modal.in,[role="dialog"],#pdf-container,[id*="pdf"],[class*="modal"],[class*="popup"],[class*="overlay"]');}catch(e){return false;}}function modalOpen(){return q('.modal.show,.modal.in,[role="dialog"][aria-modal="true"]').some(vis);}let canvases=q('canvas.page,canvas').filter(c=>bigC(c)&&vis(c));let modalCanvas=canvases.filter(inModal);let items=[];if(modalCanvas.length>0){try{items=modalCanvas.map(c=>c.toDataURL('image/png'));}catch(e){alert('Canvas capture blocked. Scroll the popup sheet into view.');return;}alert('OmniUtil v1.2: '+items.length+' modal canvas page(s).');}else if(canvases.length>0&&!modalOpen()){try{items=canvases.map(c=>c.toDataURL('image/png'));}catch(e){alert('Canvas capture blocked.');return;}alert('OmniUtil v1.2: '+items.length+' canvas page(s).');}else{let imgs=q('img').filter(bigI);let modalImgs=imgs.filter(inModal);if(modalImgs.length>0){items=modalImgs.map(i=>i.src);alert('OmniUtil v1.2: '+items.length+' modal image(s).');}else if(modalOpen()){alert('Popup open but no sheet canvas found. Scroll inside the popup to load pages — cross-origin iframes cannot be read.');return;}else if(canvases.length>0){try{items=canvases.map(c=>c.toDataURL('image/png'));}catch(e){alert('Canvas capture blocked.');return;}}else{alert('No lecture sheets found. Open the popup, scroll to load pages, then run again.');return;}}if(items.length===0){alert('No assets captured.');return;}const enc=encodeURIComponent(JSON.stringify(items));if(enc.length<900000){window.location.href=enc.length>1800?hub+'#data='+enc:hub+'?data='+enc;return;}alert('OmniUtil Bridge: transferring '+items.length+' pages...');const w=window.open(hub+'?bridge=1','_blank');if(!w){alert('Allow popups and retry.');return;}let n=0;const t=setInterval(()=>{n++;if(n>15){clearInterval(t);return;}try{w.postMessage({source:'omniutil-extractor',images:items},origin);}catch(e){}},800);const ack=e=>{if(e.data==='omniutil-acknowledged'){clearInterval(t);window.removeEventListener('message',ack);}};window.addEventListener('message',ack);})();`;
+  return `javascript:(function(){const hub='${hub}';const origin='${HUB_ORIGIN}';let xOrigin=false;function vis(el){const r=el.getBoundingClientRect();return r.width>0&&r.height>0;}function bigC(c){const r=c.getBoundingClientRect();return(r.width>300||c.width>300)&&(r.height>100||c.height>100);}function inModal(el){try{return!!el.closest('.modal-content,.modal.show,.modal.in,[role="dialog"],#pdf-container,[class*="modal"],[class*="popup"]');}catch(e){return false;}}function getCanvas(d){try{return Array.from(d.querySelectorAll('canvas.page,canvas')).filter(c=>bigC(c)&&vis(c));}catch(e){return[];}}let targets=getCanvas(document);document.querySelectorAll('iframe').forEach(f=>{try{const d=f.contentDocument||f.contentWindow.document;if(d)targets=targets.concat(getCanvas(d));}catch(e){xOrigin=true;}});let modalT=targets.filter(inModal);if(modalT.length)targets=modalT;function pickSrc(){let best='',sc=-1;document.querySelectorAll('iframe').forEach(f=>{const s=f.src||'';if(!s||s.startsWith('about:'))return;let n=(inModal(f)?5:0)+(/viewer|pdf|document|slide|sheet/i.test(s)?3:0)+(f.offsetWidth>300?1:0);if(n>sc){sc=n;best=s;}});return best;}if(!targets.length&&xOrigin){const s=pickSrc();if(s){alert('🔒 Secure Document Viewer in iframe!\\n\\nOpening direct viewer in new tab. Scroll to load all pages, then run Extract Sheet again on that tab.');window.open(s,'_blank');return;}}if(!targets.length){alert('No canvas sheets found. Scroll to load pages — or run tab-hop first if popup uses a secure iframe.');return;}let items;try{items=targets.map(c=>c.toDataURL('image/png'));}catch(e){alert('Canvas capture blocked. Scroll pages into view.');return;}alert('OmniUtil v1.3: '+items.length+' sheet page(s) captured.');function send(imgs){const enc=encodeURIComponent(JSON.stringify(imgs));if(enc.length<900000){window.location.href=enc.length>1800?hub+'#data='+enc:hub+'?data='+enc;return;}alert('OmniUtil Bridge: transferring...');const w=window.open(hub+'?bridge=1','_blank');if(!w){alert('Allow popups.');return;}let n=0;const t=setInterval(()=>{n++;if(n>15){clearInterval(t);return;}try{w.postMessage({source:'omniutil-extractor',images:imgs},origin);}catch(e){}},800);const ack=e=>{if(e.data==='omniutil-acknowledged'){clearInterval(t);window.removeEventListener('message',ack);}};window.addEventListener('message',ack);}send(items);})();`;
 }
 
 function parseImageLinks(rawHtml: string): string[] {
@@ -236,7 +236,7 @@ function SheetExtractorContent() {
               : "border-transparent text-gray-500 hover:text-gray-300"
           }`}
         >
-          📱 Method 1: Smart Target Bookmarklet (v1.2)
+          📱 Method 1: Iframe Breaker Bookmarklet (v1.3)
         </button>
         <button
           type="button"
@@ -253,37 +253,39 @@ function SheetExtractorContent() {
 
       {activeTab === "bookmarklet" && (
         <div className="space-y-4">
-          <div className="space-y-3 rounded-xl border border-blue-900/40 bg-blue-950/20 p-4 text-sm text-gray-300">
-            <h4 className="flex items-center gap-2 font-bold text-blue-400">
-              🪄 v1.2 Smart Target — modal + iframe + size filter
+          <div className="space-y-3 rounded-xl border border-emerald-900/40 bg-emerald-950/20 p-4 text-sm text-gray-300">
+            <h4 className="flex items-center gap-2 font-bold text-emerald-400">
+              🛡️ v1.3 Iframe Breaker — Tab-Hop গাইড
             </h4>
+            <p className="text-xs text-gray-400">
+              বিদ্যাবাড়ির PDF viewer cross-origin iframe-এ লক থাকলে সরাসরি canvas
+              পড়া যায় না। v1.3 সেই ক্ষেত্রে viewer-কে নতুন ট্যাবে খুলে দেয়।
+            </p>
             <ol className="list-inside list-decimal space-y-1.5 text-xs text-gray-400">
               <li>
-                <span className="font-semibold text-emerald-400">v1.2 কোড</span> কপি
-                করে <span className="font-bold text-blue-400">🪄 Extract Sheet</span>{" "}
-                বুকমার্ক আপডেট করুন।
+                <span className="font-semibold text-emerald-400">v1.3 কোড</span> কপি
+                করে বুকমার্ক আপডেট করুন।
               </li>
               <li>
-                পপ-আপ শিট ওপেন করুন — ভেতরে স্ক্রোল করে সব{" "}
-                <span className="font-semibold text-gray-200">canvas.page</span> লোড
-                করুন।
+                বিদ্যাবাড়ি <span className="font-semibold text-gray-200">পপ-আপ</span>{" "}
+                খুলে বুকমার্ক ১ম বার চালান → secure iframe থাকলে{" "}
+                <span className="text-blue-400">নতুন ট্যাব</span> ওপেন হবে।
               </li>
               <li>
-                বুকমার্ক চালান। কোড প্রথমে{" "}
-                <span className="text-emerald-400">modal/popup</span> ভেতরের বড়
-                canvas (&gt;300px) খোঁজে — iframe সহ। ব্যাকগ্রাউন্ড লোগো স্কিপ।
+                নতুন ট্যাবে স্ক্রোল করে সব পেজ লোড করুন, তারপর বুকমার্ক{" "}
+                <span className="font-bold text-blue-400">২য় বার</span> চালান।
               </li>
               <li>
-                পপ-আপ ওপেন থাকলে মেইন পেজের ছবি আর ফলব্যাক হবে না — শুধু মোডাল
-                অ্যাসেট।
+                শুধু <span className="text-emerald-400">canvas</span> ক্যাপচার —
+                লোগো, প্রোফাইল, PDF placeholder আইকন আর ফলব্যাক হবে না।
               </li>
             </ol>
           </div>
 
           <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-gray-800 bg-[#0B0F19] p-4 md:flex-row">
             <div className="space-y-1 text-center md:text-left">
-              <span className="text-xs font-bold uppercase tracking-wide text-emerald-400">
-                OmniUtil Targeted Core v1.2
+              <span className="text-xs font-bold uppercase tracking-wide text-blue-400">
+                OmniUtil Ultimate Core v1.3
               </span>
               <p className="max-w-md truncate font-mono text-xs text-gray-500 md:max-w-xl">
                 {bookmarkletCode}
@@ -298,7 +300,7 @@ function SheetExtractorContent() {
                   : "border-transparent bg-blue-600 text-white shadow-lg shadow-blue-900/20 hover:bg-blue-700"
               }`}
             >
-              {copied ? "✓ Copied!" : "Copy Magic Code"}
+              {copied ? "✓ Copied!" : "Copy Updated Code"}
             </button>
           </div>
         </div>
