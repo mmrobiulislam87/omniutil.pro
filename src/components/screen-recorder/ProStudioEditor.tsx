@@ -124,14 +124,14 @@ export function ProStudioEditor({
 
   const videoHistory = useSegmentHistory();
   const audioHistory = useSegmentHistory();
+  const videoHistoryRef = useRef(videoHistory);
+  const audioHistoryRef = useRef(audioHistory);
+  videoHistoryRef.current = videoHistory;
+  audioHistoryRef.current = audioHistory;
 
   const trackHistory = activeTrack === "video" ? videoHistory : audioHistory;
   const segments = trackHistory.segments;
   const selectedId = trackHistory.selectedId;
-  const setSelectedId = trackHistory.setSelectedId;
-  const applyTrack = trackHistory.apply;
-  const beginGesture = trackHistory.beginGesture;
-  const endGesture = trackHistory.endGesture;
 
   const canUndo = audioDetached ? trackHistory.canUndo : videoHistory.canUndo;
   const canRedo = audioDetached ? trackHistory.canRedo : videoHistory.canRedo;
@@ -145,21 +145,13 @@ export function ProStudioEditor({
       options?: { record?: boolean },
     ) => {
       if (audioDetached) {
-        applyTrack(next, nextSelected, options);
+        trackHistory.apply(next, nextSelected, options);
       } else {
-        videoHistory.apply(next, nextSelected, options);
-        audioHistory.apply(next, nextSelected, { record: false });
+        videoHistoryRef.current.apply(next, nextSelected, options);
+        audioHistoryRef.current.apply(next, nextSelected, { record: false });
       }
     },
-    [audioDetached, applyTrack, videoHistory, audioHistory],
-  );
-
-  const resetTimelines = useCallback(
-    (initial: TimelineSegment[]) => {
-      videoHistory.reset(initial);
-      audioHistory.reset(initial);
-    },
-    [videoHistory, audioHistory],
+    [audioDetached, trackHistory],
   );
 
   const [currentTime, setCurrentTime] = useState(0);
@@ -199,11 +191,13 @@ export function ProStudioEditor({
 
   useEffect(() => {
     if (!durationReady || duration <= 0) return;
-    resetTimelines(createInitialSegments(duration));
+    const initial = createInitialSegments(duration);
+    videoHistoryRef.current.reset(initial);
+    audioHistoryRef.current.reset(initial);
     setCurrentTime(0);
     setActiveTrack("video");
     setAudioDetached(false);
-  }, [duration, durationReady, resetTimelines]);
+  }, [duration, durationReady]);
 
   useEffect(() => {
     if (!stickerFile) {
@@ -222,39 +216,67 @@ export function ProStudioEditor({
     setCurrentTime(clamped);
   }, [duration]);
 
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+
+  const skipGapsDuringPlayback = useCallback(
+    (video: HTMLVideoElement, t: number) => {
+      const playbackSegments = videoHistory.segments;
+      if (playbackSegments.length === 0) return;
+
+      const inSeg = findSegmentAt(playbackSegments, t);
+      if (!inSeg) {
+        const next = playbackSegments.find((s) => s.start > t);
+        if (next) {
+          video.currentTime = next.start;
+          setCurrentTime(next.start);
+        } else {
+          video.pause();
+          setIsPlaying(false);
+        }
+        return;
+      }
+
+      if (t >= inSeg.end - 0.04) {
+        const idx = playbackSegments.indexOf(inSeg);
+        const nextSeg = playbackSegments[idx + 1];
+        if (nextSeg) {
+          video.currentTime = nextSeg.start;
+          setCurrentTime(nextSeg.start);
+        } else {
+          video.pause();
+          setIsPlaying(false);
+        }
+      }
+    },
+    [videoHistory.segments],
+  );
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    let raf = 0;
+    const tick = () => {
+      const video = videoRef.current;
+      if (video && isPlayingRef.current) {
+        const t = video.currentTime;
+        setCurrentTime(t);
+        skipGapsDuringPlayback(video, t);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, skipGapsDuringPlayback]);
+
   const onTimeUpdate = useCallback(() => {
     const video = videoRef.current;
-    const playbackSegments = videoHistory.segments;
-    if (!video || playbackSegments.length === 0) return;
-
+    if (!video) return;
     const t = video.currentTime;
     setCurrentTime(t);
-
-    if (!isPlaying) return;
-
-    const inSeg = findSegmentAt(playbackSegments, t);
-    if (!inSeg) {
-      const next = playbackSegments.find((s) => s.start > t);
-      if (next) {
-        video.currentTime = next.start;
-      } else {
-        video.pause();
-        setIsPlaying(false);
-      }
-      return;
+    if (isPlayingRef.current) {
+      skipGapsDuringPlayback(video, t);
     }
-
-    if (t >= inSeg.end - 0.04) {
-      const idx = playbackSegments.indexOf(inSeg);
-      const nextSeg = playbackSegments[idx + 1];
-      if (nextSeg) {
-        video.currentTime = nextSeg.start;
-      } else {
-        video.pause();
-        setIsPlaying(false);
-      }
-    }
-  }, [isPlaying, videoHistory.segments]);
+  }, [skipGapsDuringPlayback]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
@@ -304,8 +326,12 @@ export function ProStudioEditor({
   }, [segments, selectedId, apply]);
 
   const commitTrim = useCallback(() => {
-    endGesture();
-  }, [endGesture]);
+    if (audioDetached && activeTrack === "audio") {
+      audioHistoryRef.current.endGesture();
+    } else {
+      videoHistoryRef.current.endGesture();
+    }
+  }, [audioDetached, activeTrack]);
 
   const handleSkip = useCallback(
     (delta: number) => {
@@ -432,36 +458,37 @@ export function ProStudioEditor({
       );
 
       try {
-        const [watermark, sticker] = await Promise.all([
-          buildWatermark(),
-          buildSticker(),
-        ]);
+        const [watermark, sticker] =
+          exportMode === "audio"
+            ? [undefined, undefined]
+            : await Promise.all([buildWatermark(), buildSticker()]);
         const result = await renderStudioExport(
           rawBlob,
           {
-            segments: videoHistory.segments.map((s) => ({
-              start: s.start,
-              end: s.end,
-            })),
-            audioSegments: audioDetached
-              ? audioHistory.segments.map((s) => ({
-                  start: s.start,
-                  end: s.end,
-                }))
-              : undefined,
+            segments: (exportMode === "audio" && audioDetached
+              ? audioHistory.segments
+              : videoHistory.segments
+            ).map((s) => ({ start: s.start, end: s.end })),
+            audioSegments:
+              exportMode === "video" && audioDetached
+                ? audioHistory.segments.map((s) => ({
+                    start: s.start,
+                    end: s.end,
+                  }))
+                : undefined,
             aspectMode,
             cleanAudio,
             voiceBoost,
             speed: exportSpeed,
             preset: exportPreset,
             exportMode,
-            rotation,
-            crop,
-            flipH,
-            fadeIn,
-            fadeOut,
-            watermark,
-            sticker,
+            rotation: exportMode === "audio" ? 0 : rotation,
+            crop: exportMode === "audio" ? "none" : crop,
+            flipH: exportMode === "audio" ? false : flipH,
+            fadeIn: exportMode === "audio" ? 0 : fadeIn,
+            fadeOut: exportMode === "audio" ? 0 : fadeOut,
+            watermark: exportMode === "audio" ? undefined : watermark,
+            sticker: exportMode === "audio" ? undefined : sticker,
           },
           (message, ratio) => {
             setExportStatus(message);
@@ -663,13 +690,16 @@ export function ProStudioEditor({
                   duration={duration}
                   segments={videoHistory.segments}
                   selectedId={
-                    activeTrack === "video" ? selectedId : null
+                    !audioDetached || activeTrack === "video"
+                      ? videoHistory.selectedId
+                      : null
                   }
                   currentTime={currentTime}
                   zoom={timelineZoom}
                   disabled={exporting}
                   label="Video"
                   variant="video"
+                  showPlayhead
                   onSelect={(id) => {
                     setActiveTrack("video");
                     videoHistory.setSelectedId(id);
@@ -699,59 +729,70 @@ export function ProStudioEditor({
                       apply(next, id, { record: false });
                     }
                   }}
-                  onTrimDragStart={beginGesture}
+                  onTrimDragStart={() => {
+                    setActiveTrack("video");
+                    videoHistory.beginGesture();
+                  }}
                   onTrimComplete={commitTrim}
                 />
-                <SegmentTimeline
-                  duration={duration}
-                  segments={audioHistory.segments}
-                  selectedId={
-                    activeTrack === "audio" ? selectedId : null
-                  }
-                  currentTime={currentTime}
-                  zoom={timelineZoom}
-                  disabled={exporting}
-                  label="Audio"
-                  variant="audio"
-                  onSelect={(id) => {
-                    setActiveTrack("audio");
-                    audioHistory.setSelectedId(id);
-                    if (!audioDetached) setAudioDetached(true);
-                  }}
-                  onSeek={seek}
-                  onTrimStart={(id, time) => {
-                    setActiveTrack("audio");
-                    if (!audioDetached) setAudioDetached(true);
-                    const next = trimSegmentStart(
-                      audioHistory.segments,
-                      id,
-                      time,
-                    );
-                    if (next !== audioHistory.segments) {
-                      apply(next, id, { record: false });
+                {audioDetached ? (
+                  <SegmentTimeline
+                    duration={duration}
+                    segments={audioHistory.segments}
+                    selectedId={
+                      activeTrack === "audio" ? audioHistory.selectedId : null
                     }
-                  }}
-                  onTrimEnd={(id, time) => {
-                    setActiveTrack("audio");
-                    if (!audioDetached) setAudioDetached(true);
-                    const next = trimSegmentEnd(
-                      audioHistory.segments,
-                      id,
-                      time,
-                      0.25,
-                      duration,
-                    );
-                    if (next !== audioHistory.segments) {
-                      apply(next, id, { record: false });
-                    }
-                  }}
-                  onTrimDragStart={beginGesture}
-                  onTrimComplete={commitTrim}
-                />
-                {activeTrack === "audio" && (
+                    currentTime={currentTime}
+                    zoom={timelineZoom}
+                    disabled={exporting}
+                    label="Audio"
+                    variant="audio"
+                    showPlayhead={false}
+                    onSelect={(id) => {
+                      setActiveTrack("audio");
+                      audioHistory.setSelectedId(id);
+                    }}
+                    onSeek={seek}
+                    onTrimStart={(id, time) => {
+                      setActiveTrack("audio");
+                      const next = trimSegmentStart(
+                        audioHistory.segments,
+                        id,
+                        time,
+                      );
+                      if (next !== audioHistory.segments) {
+                        apply(next, id, { record: false });
+                      }
+                    }}
+                    onTrimEnd={(id, time) => {
+                      setActiveTrack("audio");
+                      const next = trimSegmentEnd(
+                        audioHistory.segments,
+                        id,
+                        time,
+                        0.25,
+                        duration,
+                      );
+                      if (next !== audioHistory.segments) {
+                        apply(next, id, { record: false });
+                      }
+                    }}
+                    onTrimDragStart={() => {
+                      setActiveTrack("audio");
+                      audioHistory.beginGesture();
+                    }}
+                    onTrimComplete={commitTrim}
+                  />
+                ) : (
+                  <p className="text-[10px] text-gray-600">
+                    Audio is linked to video. Enable{" "}
+                    <span className="text-gray-400">Separate audio track</span>{" "}
+                    in the Audio tab to edit audio independently.
+                  </p>
+                )}
+                {audioDetached && activeTrack === "audio" && (
                   <p className="text-[10px] text-amber-500/80">
-                    Editing audio track
-                    {audioDetached ? " (detached from video)" : ""}
+                    Editing audio track — Split/Delete/Merge affect audio only
                   </p>
                 )}
               </div>
@@ -967,7 +1008,7 @@ export function ProStudioEditor({
               <div className="space-y-3">
                 <ToggleRow
                   label="Separate audio track"
-                  hint="Cut audio independently from video on the timeline"
+                  hint="Show audio timeline and cut audio independently"
                   active={audioDetached}
                   onClick={() => {
                     if (!audioDetached) {
@@ -977,8 +1018,16 @@ export function ProStudioEditor({
                         { record: false },
                       );
                       setActiveTrack("audio");
+                      setAudioDetached(true);
+                    } else {
+                      audioHistory.apply(
+                        videoHistory.segments,
+                        videoHistory.selectedId,
+                        { record: false },
+                      );
+                      setActiveTrack("video");
+                      setAudioDetached(false);
                     }
-                    setAudioDetached((v) => !v);
                   }}
                 />
                 <ToggleRow
@@ -995,19 +1044,15 @@ export function ProStudioEditor({
                 />
                 <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3 space-y-2">
                   <p className="text-xs text-gray-400">
-                    Extract audio only — exports a WebM audio track from your
-                    kept segments (no video).
+                    Download audio only (WebM). Uses your kept segments
+                    {audioDetached ? " from the audio track" : ""}.
                   </p>
                   <Button
                     variant="secondary"
                     size="sm"
                     className="w-full gap-2"
                     disabled={!durationReady || exporting || videoHistory.segments.length === 0}
-                    onClick={() => {
-                      setAudioDetached(true);
-                      setActiveTrack("audio");
-                      void runExport(true, "audio");
-                    }}
+                    onClick={() => void runExport(true, "audio")}
                   >
                     <Music className="h-4 w-4" />
                     Export audio only

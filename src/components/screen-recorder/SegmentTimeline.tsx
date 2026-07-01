@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { formatRecordingTime } from "@/utils/screenRecorder";
+import { useWindowPointerDrag } from "@/hooks/useWindowPointerDrag";
 import type { TimelineSegment } from "@/utils/editorSegments";
 
 type SegmentTimelineProps = {
@@ -12,6 +13,8 @@ type SegmentTimelineProps = {
   currentTime: number;
   zoom: number;
   disabled?: boolean;
+  readOnly?: boolean;
+  showPlayhead?: boolean;
   label?: string;
   variant?: "video" | "audio";
   onSelect: (id: string) => void;
@@ -22,8 +25,6 @@ type SegmentTimelineProps = {
   onTrimComplete?: () => void;
 };
 
-type DragMode = "playhead" | "trim-start" | "trim-end" | null;
-
 export function SegmentTimeline({
   duration,
   segments,
@@ -31,6 +32,8 @@ export function SegmentTimeline({
   currentTime,
   zoom,
   disabled,
+  readOnly,
+  showPlayhead = true,
   label,
   variant = "video",
   onSelect,
@@ -41,8 +44,10 @@ export function SegmentTimeline({
   onTrimComplete,
 }: SegmentTimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<DragMode>(null);
-  const [dragSegId, setDragSegId] = useState<string | null>(null);
+  const dragSegIdRef = useRef<string | null>(null);
+  const dragModeRef = useRef<"playhead" | "trim-start" | "trim-end" | null>(
+    null,
+  );
 
   const pct = (t: number) => (duration > 0 ? (t / duration) * 100 : 0);
 
@@ -57,50 +62,60 @@ export function SegmentTimeline({
     [duration],
   );
 
+  const handleDragMove = useCallback(
+    (clientX: number) => {
+      const t = timeFromClientX(clientX);
+      const mode = dragModeRef.current;
+      const segId = dragSegIdRef.current;
+      if (mode === "playhead") {
+        onSeek(t);
+      } else if (mode === "trim-start" && segId) {
+        onTrimStart(segId, t);
+      } else if (mode === "trim-end" && segId) {
+        onTrimEnd(segId, t);
+      }
+    },
+    [onSeek, onTrimStart, onTrimEnd, timeFromClientX],
+  );
+
+  const handleDragEnd = useCallback(() => {
+    if (
+      dragModeRef.current === "trim-start" ||
+      dragModeRef.current === "trim-end"
+    ) {
+      onTrimComplete?.();
+    }
+    dragModeRef.current = null;
+    dragSegIdRef.current = null;
+  }, [onTrimComplete]);
+
+  const startWindowDrag = useWindowPointerDrag(handleDragMove, handleDragEnd);
+
   const startDrag =
-    (mode: DragMode, segId?: string) => (e: React.PointerEvent) => {
-      if (disabled) return;
+    (mode: "playhead" | "trim-start" | "trim-end", segId?: string) =>
+    (e: React.PointerEvent) => {
+      if (disabled || readOnly) return;
       e.preventDefault();
       e.stopPropagation();
-      setDragging(mode);
-      setDragSegId(segId ?? null);
+      dragModeRef.current = mode;
+      dragSegIdRef.current = segId ?? null;
       if (mode === "trim-start" || mode === "trim-end") {
         onTrimDragStart?.();
       }
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      handleDragMove(e.clientX);
+      startWindowDrag(e);
     };
 
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!dragging || disabled) return;
-      const t = timeFromClientX(e.clientX);
-      if (dragging === "playhead") {
-        onSeek(t);
-      } else if (dragging === "trim-start" && dragSegId) {
-        onTrimStart(dragSegId, t);
-      } else if (dragging === "trim-end" && dragSegId) {
-        onTrimEnd(dragSegId, t);
-      }
-    },
-    [dragging, disabled, dragSegId, onSeek, onTrimStart, onTrimEnd, timeFromClientX],
-  );
-
-  const onPointerUp = () => {
-    if (dragging === "trim-start" || dragging === "trim-end") {
-      onTrimComplete?.();
-    }
-    setDragging(null);
-    setDragSegId(null);
-  };
-
   const onTrackClick = (e: React.MouseEvent) => {
-    if (disabled || dragging) return;
+    if (disabled || readOnly) return;
+    if ((e.target as HTMLElement).closest("[data-playhead]")) return;
     if ((e.target as HTMLElement).closest("[data-segment]")) return;
     onSeek(timeFromClientX(e.clientX));
   };
 
   const isAudio = variant === "audio";
   const kept = segments.reduce((s, seg) => s + (seg.end - seg.start), 0);
+  const inactive = disabled || readOnly;
 
   return (
     <div className="space-y-2 select-none">
@@ -113,7 +128,7 @@ export function SegmentTimeline({
           <span
             className={isAudio ? "text-amber-400/90" : "text-emerald-400/90"}
           >
-            {formatRecordingTime(kept * 1000, true)} kept
+            {formatRecordingTime(kept * 1000, true)}
           </span>
         </p>
       </div>
@@ -124,15 +139,12 @@ export function SegmentTimeline({
           role="slider"
           aria-label={isAudio ? "Audio timeline" : "Video timeline"}
           className={cn(
-            "relative min-w-full cursor-pointer",
+            "relative min-w-full",
+            inactive ? "opacity-50" : "cursor-pointer",
             isAudio ? "h-[3.25rem]" : "h-[4.5rem]",
-            disabled && "pointer-events-none opacity-50",
           )}
           style={{ width: `${zoom * 100}%` }}
           onClick={onTrackClick}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
         >
           <div
             className={cn(
@@ -166,11 +178,10 @@ export function SegmentTimeline({
               "absolute inset-x-2 bottom-2 rounded bg-gray-900/50",
               isAudio ? "top-5" : "top-8",
               isAudio &&
-                "bg-[repeating-linear-gradient(90deg,rgba(251,191,36,0.06)_0px,rgba(251,191,36,0.06)_2px,transparent_2px,transparent_6px)]",
+                "bg-[repeating-linear-gradient(90deg,rgba(251,191,36,0.08)_0px,rgba(251,191,36,0.08)_2px,transparent_2px,transparent_6px)]",
             )}
           />
 
-          {/* Removed / gap regions */}
           {segments.length > 0 && (
             <RemovedRegions
               duration={duration}
@@ -205,6 +216,7 @@ export function SegmentTimeline({
                 <button
                   type="button"
                   className="absolute inset-0 rounded"
+                  disabled={inactive}
                   onClick={(e) => {
                     e.stopPropagation();
                     onSelect(seg.id);
@@ -218,19 +230,19 @@ export function SegmentTimeline({
                   {formatRecordingTime((seg.end - seg.start) * 1000, true)}
                 </span>
 
-                {selected && !disabled && (
+                {selected && !inactive && (
                   <>
                     <button
                       type="button"
                       aria-label="Trim start"
                       onPointerDown={startDrag("trim-start", seg.id)}
-                      className="absolute bottom-0 left-0 top-0 z-20 w-2.5 cursor-ew-resize rounded-l border-l-2 border-white/70 bg-white/10 hover:bg-white/25"
+                      className="absolute bottom-0 left-0 top-0 z-20 w-3 cursor-ew-resize rounded-l border-l-2 border-white/80 bg-white/15 hover:bg-white/30"
                     />
                     <button
                       type="button"
                       aria-label="Trim end"
                       onPointerDown={startDrag("trim-end", seg.id)}
-                      className="absolute bottom-0 right-0 top-0 z-20 w-2.5 cursor-ew-resize rounded-r border-r-2 border-white/70 bg-white/10 hover:bg-white/25"
+                      className="absolute bottom-0 right-0 top-0 z-20 w-3 cursor-ew-resize rounded-r border-r-2 border-white/80 bg-white/15 hover:bg-white/30"
                     />
                   </>
                 )}
@@ -238,15 +250,26 @@ export function SegmentTimeline({
             );
           })}
 
-          <button
-            type="button"
-            aria-label="Playhead"
-            onPointerDown={startDrag("playhead")}
-            className="absolute bottom-0 top-0 z-30 w-0.5 -translate-x-1/2 bg-red-500 shadow-[0_0_12px_rgba(239,68,68,0.75)]"
-            style={{ left: `${pct(currentTime)}%` }}
-          >
-            <span className="absolute -top-px left-1/2 h-0 w-0 -translate-x-1/2 border-x-[6px] border-t-[7px] border-x-transparent border-t-red-500" />
-          </button>
+          {showPlayhead && !inactive && (
+            <button
+              type="button"
+              data-playhead
+              aria-label="Playhead — drag to seek"
+              onPointerDown={startDrag("playhead")}
+              className="absolute bottom-0 top-0 z-40 w-4 -translate-x-1/2 cursor-ew-resize touch-none"
+              style={{ left: `${pct(currentTime)}%` }}
+            >
+              <span className="absolute bottom-0 left-1/2 top-0 w-0.5 -translate-x-1/2 bg-red-500 shadow-[0_0_12px_rgba(239,68,68,0.85)]" />
+              <span className="absolute -top-px left-1/2 h-0 w-0 -translate-x-1/2 border-x-[7px] border-t-[8px] border-x-transparent border-t-red-500" />
+            </button>
+          )}
+          {showPlayhead && inactive && (
+            <span
+              className="pointer-events-none absolute bottom-0 top-0 z-30 w-0.5 -translate-x-1/2 bg-red-500/60"
+              style={{ left: `${pct(currentTime)}%` }}
+              aria-hidden
+            />
+          )}
         </div>
       </div>
 

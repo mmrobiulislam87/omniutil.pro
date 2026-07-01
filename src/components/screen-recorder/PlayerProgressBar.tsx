@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatRecordingTime } from "@/utils/screenRecorder";
+import { useWindowPointerDrag } from "@/hooks/useWindowPointerDrag";
 
 type PlayerProgressBarProps = {
   duration: number;
@@ -33,20 +34,16 @@ export function PlayerProgressBar({
     [duration],
   );
 
+  const startDrag = useWindowPointerDrag(
+    (clientX) => onSeek(timeFromClientX(clientX)),
+    () => setDragging(false),
+  );
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (disabled) return;
-    e.preventDefault();
     setDragging(true);
-    onSeek(timeFromClientX(e.clientX));
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    startDrag(e);
   };
-
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (!dragging || disabled) return;
-    onSeek(timeFromClientX(e.clientX));
-  };
-
-  const onPointerUp = () => setDragging(false);
 
   return (
     <div className="space-y-1.5 border-t border-gray-800/60 px-4 py-3">
@@ -58,22 +55,20 @@ export function PlayerProgressBar({
         aria-valuemax={duration}
         aria-valuenow={currentTime}
         className={cn(
-          "group relative h-2 cursor-pointer rounded-full bg-gray-800/90",
+          "group relative h-3 cursor-pointer rounded-full bg-gray-800/90 py-1",
           disabled && "pointer-events-none opacity-40",
         )}
         onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
       >
+        <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-gray-700/80" />
         <div
-          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-blue-600/80 to-violet-500/80"
+          className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-gradient-to-r from-blue-600 to-violet-500"
           style={{ width: `${pct}%` }}
         />
         <div
           className={cn(
-            "absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500 shadow-md transition-transform",
-            dragging ? "scale-110" : "scale-100 group-hover:scale-105",
+            "absolute top-1/2 z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500 shadow-md",
+            dragging ? "scale-110" : "group-hover:scale-105",
           )}
           style={{ left: `${pct}%` }}
         />

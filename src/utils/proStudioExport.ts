@@ -59,8 +59,11 @@ function resetFfmpeg(): void {
 
 function exportError(err: unknown, fallback: string): Error {
   if (isWasmMemoryError(err)) {
+    const isAudio = fallback.includes("audio") || fallback.includes("Audio");
     return new Error(
-      "Video processing ran out of memory. Effects will retry in browser mode automatically.",
+      isAudio
+        ? "Audio extract failed — file may be too large. Try a shorter clip or download the raw WebM."
+        : "Video processing ran out of memory. Effects will retry in browser mode automatically.",
     );
   }
   if (err instanceof Error) {
@@ -582,6 +585,62 @@ async function concatAudioSegments(
   return "merged-audio.webm";
 }
 
+async function runAudioOnlyPipeline(
+  blob: Blob,
+  config: StudioExportConfig,
+  onProgress?: ProgressCallback,
+): Promise<Blob> {
+  const segments = (config.audioSegments ?? config.segments).filter(
+    (s) => s.end > s.start,
+  );
+  if (segments.length === 0) throw new Error("No audio segments to export.");
+
+  const speed = config.speed ?? 1;
+  const simple =
+    segments.length === 1 &&
+    !config.cleanAudio &&
+    !config.voiceBoost &&
+    speed === 1;
+
+  if (simple) {
+    const { exportAudioInBrowser } = await import("@/utils/studioAudioExport");
+    return exportAudioInBrowser(blob, config, onProgress);
+  }
+
+  const { ffmpeg, fetchFile } = await loadFfmpeg(onProgress);
+  const inputName = "input.webm";
+
+  try {
+    await ffmpeg.writeFile(inputName, await fetchFile(blob));
+    onProgress?.("Cutting audio segments…", 25);
+    const mergedAudioName = await concatAudioSegments(
+      ffmpeg,
+      segments,
+      inputName,
+      onProgress,
+    );
+    await ffmpeg.deleteFile(inputName).catch(() => undefined);
+
+    const totalDuration = segmentDuration(segments) / speed;
+    const data = await encodeMerged(
+      ffmpeg,
+      { ...config, exportMode: "audio" },
+      mergedAudioName,
+      totalDuration,
+      0,
+      onProgress,
+      "lite",
+      null,
+    );
+    await ffmpeg.deleteFile(mergedAudioName).catch(() => undefined);
+    onProgress?.("Done", 100);
+    return toBlob(data, "audio/webm");
+  } catch (err) {
+    resetFfmpegLoader();
+    throw err;
+  }
+}
+
 async function tryEncodeWithTiers(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ffmpeg: any,
@@ -759,8 +818,51 @@ export async function renderStudioExport(
   const segments = config.segments.filter((s) => s.end > s.start);
   if (segments.length === 0) throw new Error("No segments to export.");
 
+  if (config.exportMode === "audio") {
+    const needsFfmpegAudio =
+      config.cleanAudio ||
+      config.voiceBoost ||
+      (config.speed ?? 1) !== 1;
+
+    if (!needsFfmpegAudio) {
+      try {
+        const { exportAudioInBrowser } = await import(
+          "@/utils/studioAudioExport"
+        );
+        return await exportAudioInBrowser(blob, config, onProgress);
+      } catch (browserErr) {
+        onProgress?.("Trying ffmpeg audio extract…", 12);
+        try {
+          return await runAudioOnlyPipeline(blob, config, onProgress);
+        } catch {
+          throw browserErr instanceof Error
+            ? browserErr
+            : new Error(
+                "Audio extract failed. Try a shorter clip or download the raw WebM.",
+              );
+        }
+      }
+    }
+
+    try {
+      return await runAudioOnlyPipeline(blob, config, onProgress);
+    } catch (err) {
+      onProgress?.("Trying browser audio extract…", 12);
+      try {
+        const { exportAudioInBrowser } = await import(
+          "@/utils/studioAudioExport"
+        );
+        return await exportAudioInBrowser(blob, config, onProgress);
+      } catch (browserErr) {
+        throw exportError(
+          browserErr,
+          "Audio extract failed. Try a shorter clip or disable audio filters.",
+        );
+      }
+    }
+  }
+
   const needsAdvancedPipeline =
-    config.exportMode === "audio" ||
     hasVideoEffects(config) ||
     config.cleanAudio ||
     config.voiceBoost ||
@@ -798,7 +900,7 @@ export async function renderStudioExport(
   try {
     return await runFfmpegPipeline(blob, config, onProgress);
   } catch (err) {
-    if (hasVideoEffects(config) && config.exportMode !== "audio") {
+    if (hasVideoEffects(config)) {
       onProgress?.("Trying browser effects export…", 15);
       try {
         const { exportStudioViaCanvas } = await import(
@@ -815,8 +917,7 @@ export async function renderStudioExport(
     if (
       segments.length === 1 &&
       config.aspectMode === "landscape" &&
-      !hasVideoEffects(config) &&
-      config.exportMode !== "audio"
+      !hasVideoEffects(config)
     ) {
       const s = segments[0];
       onProgress?.("Advanced export failed — trying simple trim…", 12);
