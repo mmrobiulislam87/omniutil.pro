@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EditorToolbar } from "@/components/screen-recorder/EditorToolbar";
+import { InteractiveOverlay } from "@/components/screen-recorder/InteractiveOverlay";
+import { PlayerProgressBar } from "@/components/screen-recorder/PlayerProgressBar";
 import { SegmentTimeline } from "@/components/screen-recorder/SegmentTimeline";
 import { cn } from "@/lib/cn";
 import { downloadBlob, formatBytes } from "@/lib/format";
@@ -49,6 +51,10 @@ import {
 } from "@/utils/proStudioExport";
 import { resetFfmpegLoader } from "@/utils/ffmpegLoader";
 import { getPreviewTransformStyle } from "@/utils/studioFilters";
+import {
+  DEFAULT_OVERLAY_PLACEMENT,
+  type OverlayPlacement,
+} from "@/utils/overlayPlacement";
 import { SPEED_OPTIONS } from "@/utils/videoTrimmer";
 import {
   fileToBytes,
@@ -108,23 +114,53 @@ export function ProStudioEditor({
   onNewRecording,
 }: ProStudioEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const stickerInputRef = useRef<HTMLInputElement>(null);
 
   const [tab, setTab] = useState<EditorTab>("cut");
-  const {
-    segments,
-    selectedId,
-    setSelectedId,
-    reset: resetHistory,
-    apply,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    beginGesture,
-    endGesture,
-  } = useSegmentHistory();
+  const [activeTrack, setActiveTrack] = useState<"video" | "audio">("video");
+  const [audioDetached, setAudioDetached] = useState(false);
+
+  const videoHistory = useSegmentHistory();
+  const audioHistory = useSegmentHistory();
+
+  const trackHistory = activeTrack === "video" ? videoHistory : audioHistory;
+  const segments = trackHistory.segments;
+  const selectedId = trackHistory.selectedId;
+  const setSelectedId = trackHistory.setSelectedId;
+  const applyTrack = trackHistory.apply;
+  const beginGesture = trackHistory.beginGesture;
+  const endGesture = trackHistory.endGesture;
+
+  const canUndo = audioDetached ? trackHistory.canUndo : videoHistory.canUndo;
+  const canRedo = audioDetached ? trackHistory.canRedo : videoHistory.canRedo;
+  const undo = audioDetached ? trackHistory.undo : videoHistory.undo;
+  const redo = audioDetached ? trackHistory.redo : videoHistory.redo;
+
+  const apply = useCallback(
+    (
+      next: TimelineSegment[],
+      nextSelected?: string | null,
+      options?: { record?: boolean },
+    ) => {
+      if (audioDetached) {
+        applyTrack(next, nextSelected, options);
+      } else {
+        videoHistory.apply(next, nextSelected, options);
+        audioHistory.apply(next, nextSelected, { record: false });
+      }
+    },
+    [audioDetached, applyTrack, videoHistory, audioHistory],
+  );
+
+  const resetTimelines = useCallback(
+    (initial: TimelineSegment[]) => {
+      videoHistory.reset(initial);
+      audioHistory.reset(initial);
+    },
+    [videoHistory, audioHistory],
+  );
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -151,19 +187,33 @@ export function ProStudioEditor({
   const [logoFile, setLogoFile] = useState<File | null>(null);
 
   const [stickerFile, setStickerFile] = useState<File | null>(null);
-  const [stickerPosition, setStickerPosition] =
-    useState<WatermarkPosition>("top-left");
-  const [stickerOpacity, setStickerOpacity] = useState(0.9);
-  const [stickerScale, setStickerScale] = useState(0.25);
+  const [stickerPreviewUrl, setStickerPreviewUrl] = useState<string | null>(
+    null,
+  );
+  const [stickerPlacement, setStickerPlacement] = useState<OverlayPlacement>(
+    DEFAULT_OVERLAY_PLACEMENT,
+  );
 
   const [exportStatus, setExportStatus] = useState("");
   const [exportProgress, setExportProgress] = useState(0);
 
   useEffect(() => {
     if (!durationReady || duration <= 0) return;
-    resetHistory(createInitialSegments(duration));
+    resetTimelines(createInitialSegments(duration));
     setCurrentTime(0);
-  }, [duration, durationReady, resetHistory]);
+    setActiveTrack("video");
+    setAudioDetached(false);
+  }, [duration, durationReady, resetTimelines]);
+
+  useEffect(() => {
+    if (!stickerFile) {
+      setStickerPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(stickerFile);
+    setStickerPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [stickerFile]);
 
   const seek = useCallback((t: number) => {
     const video = videoRef.current;
@@ -174,16 +224,17 @@ export function ProStudioEditor({
 
   const onTimeUpdate = useCallback(() => {
     const video = videoRef.current;
-    if (!video || segments.length === 0) return;
+    const playbackSegments = videoHistory.segments;
+    if (!video || playbackSegments.length === 0) return;
 
     const t = video.currentTime;
     setCurrentTime(t);
 
     if (!isPlaying) return;
 
-    const inSeg = findSegmentAt(segments, t);
+    const inSeg = findSegmentAt(playbackSegments, t);
     if (!inSeg) {
-      const next = segments.find((s) => s.start > t);
+      const next = playbackSegments.find((s) => s.start > t);
       if (next) {
         video.currentTime = next.start;
       } else {
@@ -194,8 +245,8 @@ export function ProStudioEditor({
     }
 
     if (t >= inSeg.end - 0.04) {
-      const idx = segments.indexOf(inSeg);
-      const nextSeg = segments[idx + 1];
+      const idx = playbackSegments.indexOf(inSeg);
+      const nextSeg = playbackSegments[idx + 1];
       if (nextSeg) {
         video.currentTime = nextSeg.start;
       } else {
@@ -203,14 +254,15 @@ export function ProStudioEditor({
         setIsPlaying(false);
       }
     }
-  }, [isPlaying, segments]);
+  }, [isPlaying, videoHistory.segments]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
-    if (!video || segments.length === 0) return;
+    const playbackSegments = videoHistory.segments;
+    if (!video || playbackSegments.length === 0) return;
 
     if (video.paused) {
-      const start = clampToSegments(segments, currentTime);
+      const start = clampToSegments(playbackSegments, currentTime);
       video.currentTime = start;
       void video.play();
       setIsPlaying(true);
@@ -218,7 +270,7 @@ export function ProStudioEditor({
       video.pause();
       setIsPlaying(false);
     }
-  }, [currentTime, segments]);
+  }, [currentTime, videoHistory.segments]);
 
   const selected = segments.find((s) => s.id === selectedId);
   const canSplit =
@@ -250,22 +302,6 @@ export function ProStudioEditor({
     if (next === segments) return;
     apply(next, selectedId);
   }, [segments, selectedId, apply]);
-
-  const handleTrimStart = useCallback(
-    (id: string, time: number) => {
-      const next = trimSegmentStart(segments, id, time);
-      if (next !== segments) apply(next, id, { record: false });
-    },
-    [segments, apply],
-  );
-
-  const handleTrimEnd = useCallback(
-    (id: string, time: number) => {
-      const next = trimSegmentEnd(segments, id, time, 0.25, duration);
-      if (next !== segments) apply(next, id, { record: false });
-    },
-    [segments, duration, apply],
-  );
 
   const commitTrim = useCallback(() => {
     endGesture();
@@ -375,15 +411,17 @@ export function ProStudioEditor({
     if (!stickerFile) return undefined;
     return {
       pngBytes: await fileToBytes(stickerFile),
-      position: stickerPosition,
-      opacity: stickerOpacity,
-      scale: stickerScale,
+      x: stickerPlacement.x,
+      y: stickerPlacement.y,
+      scale: stickerPlacement.scale,
+      rotation: stickerPlacement.rotation,
+      opacity: stickerPlacement.opacity,
     };
-  }, [stickerFile, stickerOpacity, stickerPosition, stickerScale]);
+  }, [stickerFile, stickerPlacement]);
 
   const runExport = useCallback(
     async (download: boolean, exportMode: ExportMode = "video") => {
-      if (!rawBlob || segments.length === 0) return;
+      if (!rawBlob || videoHistory.segments.length === 0) return;
       onExportingChange(true);
       onError(null);
       setExportProgress(0);
@@ -401,7 +439,16 @@ export function ProStudioEditor({
         const result = await renderStudioExport(
           rawBlob,
           {
-            segments: segments.map((s) => ({ start: s.start, end: s.end })),
+            segments: videoHistory.segments.map((s) => ({
+              start: s.start,
+              end: s.end,
+            })),
+            audioSegments: audioDetached
+              ? audioHistory.segments.map((s) => ({
+                  start: s.start,
+                  end: s.end,
+                }))
+              : undefined,
             aspectMode,
             cleanAudio,
             voiceBoost,
@@ -456,7 +503,9 @@ export function ProStudioEditor({
     },
     [
       rawBlob,
-      segments,
+      videoHistory.segments,
+      audioDetached,
+      audioHistory.segments,
       aspectMode,
       rotation,
       crop,
@@ -475,7 +524,7 @@ export function ProStudioEditor({
     ],
   );
 
-  const keptDuration = segmentsDuration(segments);
+  const keptDuration = segmentsDuration(videoHistory.segments);
   const outputDuration = keptDuration / exportSpeed;
   const previewStyle = getPreviewTransformStyle(rotation, crop, flipH);
 
@@ -511,6 +560,7 @@ export function ProStudioEditor({
         {/* Preview + transport */}
         <div className="border-b border-gray-800/60 lg:border-b-0 lg:border-r">
           <div
+            ref={previewRef}
             className={cn(
               "relative flex items-center justify-center bg-black",
               aspectMode === "shorts" ? "min-h-[420px]" : "min-h-[280px]",
@@ -529,6 +579,15 @@ export function ProStudioEditor({
                 aspectMode === "shorts" && "max-w-[min(100%,280px)]",
               )}
             />
+            {stickerPreviewUrl && (
+              <InteractiveOverlay
+                imageUrl={stickerPreviewUrl}
+                placement={stickerPlacement}
+                disabled={exporting}
+                containerRef={previewRef}
+                onChange={setStickerPlacement}
+              />
+            )}
             {aspectMode === "shorts" && (
               <div
                 className="pointer-events-none absolute inset-0 mx-auto max-w-[280px] rounded-lg ring-2 ring-violet-500/50"
@@ -548,6 +607,13 @@ export function ProStudioEditor({
               </button>
             )}
           </div>
+
+          <PlayerProgressBar
+            duration={duration}
+            currentTime={currentTime}
+            disabled={!durationReady || exporting}
+            onSeek={seek}
+          />
 
           <div className="flex flex-wrap items-center gap-3 border-t border-gray-800/60 px-4 py-3">
             <Button
@@ -592,21 +658,102 @@ export function ProStudioEditor({
                 onSkip={handleSkip}
                 onZoomChange={setTimelineZoom}
               />
-              <div className="px-4 py-4">
+              <div className="space-y-3 px-4 py-4">
                 <SegmentTimeline
                   duration={duration}
-                  segments={segments}
-                  selectedId={selectedId}
+                  segments={videoHistory.segments}
+                  selectedId={
+                    activeTrack === "video" ? selectedId : null
+                  }
                   currentTime={currentTime}
                   zoom={timelineZoom}
                   disabled={exporting}
-                  onSelect={setSelectedId}
+                  label="Video"
+                  variant="video"
+                  onSelect={(id) => {
+                    setActiveTrack("video");
+                    videoHistory.setSelectedId(id);
+                  }}
                   onSeek={seek}
-                  onTrimStart={handleTrimStart}
-                  onTrimEnd={handleTrimEnd}
+                  onTrimStart={(id, time) => {
+                    setActiveTrack("video");
+                    const next = trimSegmentStart(
+                      videoHistory.segments,
+                      id,
+                      time,
+                    );
+                    if (next !== videoHistory.segments) {
+                      apply(next, id, { record: false });
+                    }
+                  }}
+                  onTrimEnd={(id, time) => {
+                    setActiveTrack("video");
+                    const next = trimSegmentEnd(
+                      videoHistory.segments,
+                      id,
+                      time,
+                      0.25,
+                      duration,
+                    );
+                    if (next !== videoHistory.segments) {
+                      apply(next, id, { record: false });
+                    }
+                  }}
                   onTrimDragStart={beginGesture}
                   onTrimComplete={commitTrim}
                 />
+                <SegmentTimeline
+                  duration={duration}
+                  segments={audioHistory.segments}
+                  selectedId={
+                    activeTrack === "audio" ? selectedId : null
+                  }
+                  currentTime={currentTime}
+                  zoom={timelineZoom}
+                  disabled={exporting}
+                  label="Audio"
+                  variant="audio"
+                  onSelect={(id) => {
+                    setActiveTrack("audio");
+                    audioHistory.setSelectedId(id);
+                    if (!audioDetached) setAudioDetached(true);
+                  }}
+                  onSeek={seek}
+                  onTrimStart={(id, time) => {
+                    setActiveTrack("audio");
+                    if (!audioDetached) setAudioDetached(true);
+                    const next = trimSegmentStart(
+                      audioHistory.segments,
+                      id,
+                      time,
+                    );
+                    if (next !== audioHistory.segments) {
+                      apply(next, id, { record: false });
+                    }
+                  }}
+                  onTrimEnd={(id, time) => {
+                    setActiveTrack("audio");
+                    if (!audioDetached) setAudioDetached(true);
+                    const next = trimSegmentEnd(
+                      audioHistory.segments,
+                      id,
+                      time,
+                      0.25,
+                      duration,
+                    );
+                    if (next !== audioHistory.segments) {
+                      apply(next, id, { record: false });
+                    }
+                  }}
+                  onTrimDragStart={beginGesture}
+                  onTrimComplete={commitTrim}
+                />
+                {activeTrack === "audio" && (
+                  <p className="text-[10px] text-amber-500/80">
+                    Editing audio track
+                    {audioDetached ? " (detached from video)" : ""}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -819,6 +966,22 @@ export function ProStudioEditor({
             {tab === "audio" && (
               <div className="space-y-3">
                 <ToggleRow
+                  label="Separate audio track"
+                  hint="Cut audio independently from video on the timeline"
+                  active={audioDetached}
+                  onClick={() => {
+                    if (!audioDetached) {
+                      audioHistory.apply(
+                        videoHistory.segments,
+                        videoHistory.selectedId,
+                        { record: false },
+                      );
+                      setActiveTrack("audio");
+                    }
+                    setAudioDetached((v) => !v);
+                  }}
+                />
+                <ToggleRow
                   label="Noise clean"
                   hint="High-pass + low-pass filter"
                   active={cleanAudio}
@@ -839,8 +1002,12 @@ export function ProStudioEditor({
                     variant="secondary"
                     size="sm"
                     className="w-full gap-2"
-                    disabled={!durationReady || exporting || segments.length === 0}
-                    onClick={() => void runExport(true, "audio")}
+                    disabled={!durationReady || exporting || videoHistory.segments.length === 0}
+                    onClick={() => {
+                      setAudioDetached(true);
+                      setActiveTrack("audio");
+                      void runExport(true, "audio");
+                    }}
                   >
                     <Music className="h-4 w-4" />
                     Export audio only
@@ -974,51 +1141,45 @@ export function ProStudioEditor({
                   </Button>
                   {stickerFile && (
                     <>
-                      <label className="block space-y-1.5">
-                        <span className="text-xs text-gray-500">Position</span>
-                        <select
-                          value={stickerPosition}
-                          onChange={(e) =>
-                            setStickerPosition(
-                              e.target.value as WatermarkPosition,
-                            )
-                          }
-                          className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200"
-                        >
-                          <option value="top-left">Top left</option>
-                          <option value="top-right">Top right</option>
-                          <option value="bottom-left">Bottom left</option>
-                          <option value="bottom-right">Bottom right</option>
-                        </select>
-                      </label>
+                      <p className="text-xs leading-relaxed text-gray-500">
+                        Drag the image on the preview to move it. Use the corner
+                        handle to resize and the top handle to rotate.
+                      </p>
                       <label className="block space-y-1.5">
                         <span className="text-xs text-gray-500">
-                          Size {Math.round(stickerScale * 100)}%
-                        </span>
-                        <input
-                          type="range"
-                          min={0.08}
-                          max={0.5}
-                          step={0.02}
-                          value={stickerScale}
-                          onChange={(e) =>
-                            setStickerScale(Number(e.target.value))
-                          }
-                          className="w-full accent-blue-500"
-                        />
-                      </label>
-                      <label className="block space-y-1.5">
-                        <span className="text-xs text-gray-500">
-                          Opacity {Math.round(stickerOpacity * 100)}%
+                          Opacity{" "}
+                          {Math.round(stickerPlacement.opacity * 100)}%
                         </span>
                         <input
                           type="range"
                           min={0.2}
                           max={1}
                           step={0.05}
-                          value={stickerOpacity}
+                          value={stickerPlacement.opacity}
                           onChange={(e) =>
-                            setStickerOpacity(Number(e.target.value))
+                            setStickerPlacement((p) => ({
+                              ...p,
+                              opacity: Number(e.target.value),
+                            }))
+                          }
+                          className="w-full accent-blue-500"
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-gray-500">
+                          Size {Math.round(stickerPlacement.scale * 100)}%
+                        </span>
+                        <input
+                          type="range"
+                          min={0.08}
+                          max={0.85}
+                          step={0.02}
+                          value={stickerPlacement.scale}
+                          onChange={(e) =>
+                            setStickerPlacement((p) => ({
+                              ...p,
+                              scale: Number(e.target.value),
+                            }))
                           }
                           className="w-full accent-blue-500"
                         />
@@ -1027,7 +1188,10 @@ export function ProStudioEditor({
                         variant="ghost"
                         size="sm"
                         className="w-full text-gray-500"
-                        onClick={() => setStickerFile(null)}
+                        onClick={() => {
+                          setStickerFile(null);
+                          setStickerPlacement(DEFAULT_OVERLAY_PLACEMENT);
+                        }}
                       >
                         Remove image
                       </Button>
@@ -1111,7 +1275,7 @@ export function ProStudioEditor({
 
             <Button
               className="w-full gap-2"
-              disabled={!durationReady || exporting || segments.length === 0}
+              disabled={!durationReady || exporting || videoHistory.segments.length === 0}
               onClick={() => void runExport(true)}
             >
               <Download className="h-4 w-4" />
@@ -1120,7 +1284,7 @@ export function ProStudioEditor({
             <Button
               variant="secondary"
               className="w-full gap-2"
-              disabled={!durationReady || exporting || segments.length === 0}
+              disabled={!durationReady || exporting || videoHistory.segments.length === 0}
               onClick={() => void runExport(false)}
             >
               <Zap className="h-4 w-4" />

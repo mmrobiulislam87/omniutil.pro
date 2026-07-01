@@ -1,4 +1,5 @@
 import { overlayCoords, type WatermarkPosition } from "@/utils/watermarkCanvas";
+import { overlayCenterExpr } from "@/utils/overlayPlacement";
 
 export type AspectMode = "landscape" | "shorts";
 
@@ -12,6 +13,14 @@ export type ImageOverlaySpec = {
   opacity: number;
   scale: number;
   position: WatermarkPosition;
+};
+
+export type FreeformOverlaySpec = {
+  opacity: number;
+  scale: number;
+  x: number;
+  y: number;
+  rotation: number;
 };
 
 function maxWidthForTier(tier: FilterTier): number {
@@ -88,7 +97,7 @@ export function buildStudioVideoFilter(opts: {
   fadeOut: number;
   totalDuration: number;
   watermark?: ImageOverlaySpec;
-  sticker?: ImageOverlaySpec;
+  sticker?: FreeformOverlaySpec;
   watermarkInput?: string;
   stickerInput?: string;
   tier?: FilterTier;
@@ -153,9 +162,14 @@ export function buildStudioVideoFilter(opts: {
 
   if (opts.sticker) {
     const out = "outv";
-    const pos = overlayCoords(opts.sticker.position);
+    const pos = overlayCenterExpr(opts.sticker.x, opts.sticker.y);
+    const rot = opts.sticker.rotation;
+    const rotFilter =
+      rot !== 0
+        ? `,rotate=${rot}*PI/180:c=none:ow=rotw(iw\\,ih):oh=roth(iw\\,ih)`
+        : "";
     parts.push(
-      `[${stIn}]format=rgba,colorchannelmixer=aa=${opts.sticker.opacity},scale=iw*${opts.sticker.scale}:-1[st];[${current}][st]overlay=${pos}[${out}]`,
+      `[${stIn}]format=rgba,colorchannelmixer=aa=${opts.sticker.opacity},scale=iw*${opts.sticker.scale}:-1${rotFilter}[st];[${current}][st]overlay=${pos}[${out}]`,
     );
     current = out;
   } else {

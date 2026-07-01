@@ -42,10 +42,13 @@ export type StudioExportConfig = {
   };
   sticker?: {
     pngBytes: Uint8Array;
-    position: WatermarkPosition;
-    opacity: number;
+    x: number;
+    y: number;
     scale: number;
+    rotation: number;
+    opacity: number;
   };
+  audioSegments?: { start: number; end: number }[];
 };
 
 type ProgressCallback = (message: string, ratio?: number) => void;
@@ -383,6 +386,7 @@ async function encodeMerged(
   attempt: number,
   onProgress?: ProgressCallback,
   filterTier: FilterTier = "lite",
+  mergedAudioName: string | null = null,
 ): Promise<Uint8Array> {
   const outputName =
     config.exportMode === "audio" ? "final-audio.webm" : "final.webm";
@@ -422,7 +426,9 @@ async function encodeMerged(
       ? {
           opacity: sticker.opacity,
           scale: sticker.scale,
-          position: sticker.position,
+          x: sticker.x,
+          y: sticker.y,
+          rotation: sticker.rotation,
         }
       : undefined,
     watermarkInput: wm ? "1:v" : undefined,
@@ -435,6 +441,10 @@ async function encodeMerged(
   const args: string[] = ["-i", mergedName];
   if (wm) args.push("-i", "logo.png");
   if (sticker) args.push("-i", "sticker.png");
+  if (mergedAudioName) args.push("-i", mergedAudioName);
+  const audioMap = mergedAudioName
+    ? `${1 + (wm ? 1 : 0) + (sticker ? 1 : 0)}:a?`
+    : "0:a?";
 
   if (videoFilter) {
     let chain = videoFilter;
@@ -446,17 +456,17 @@ async function encodeMerged(
     }
     args.push("-filter_complex", chain);
     args.push("-map", "[outv]");
-    args.push("-map", "0:a?");
+    args.push("-map", audioMap);
   } else if (hasSpeed || scaleOnly) {
     const vf: string[] = [];
     if (scaleOnly) vf.push(scaleOnly);
     if (hasSpeed) vf.push(`setpts=PTS/${speed}`);
     args.push("-vf", vf.join(","));
     args.push("-map", "0:v");
-    args.push("-map", "0:a?");
+    args.push("-map", audioMap);
   } else {
     args.push("-map", "0:v");
-    args.push("-map", "0:a?");
+    args.push("-map", audioMap);
   }
 
   const audioChain = audioFilterChain(config.cleanAudio, config.voiceBoost);
@@ -480,6 +490,98 @@ function segmentDuration(segments: { start: number; end: number }[]): number {
   return segments.reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0);
 }
 
+function segmentsEqual(
+  a: { start: number; end: number }[],
+  b: { start: number; end: number }[],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every(
+    (s, i) =>
+      Math.abs(s.start - b[i].start) < 0.001 &&
+      Math.abs(s.end - b[i].end) < 0.001,
+  );
+}
+
+async function cutAudioClip(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ffmpeg: any,
+  inputName: string,
+  start: number,
+  duration: number,
+  outputName: string,
+): Promise<void> {
+  await execChecked(
+    ffmpeg,
+    [
+      "-ss",
+      String(start),
+      "-i",
+      inputName,
+      "-t",
+      String(duration),
+      "-vn",
+      "-c:a",
+      "libopus",
+      "-b:a",
+      "128k",
+      outputName,
+    ],
+    "Cut audio",
+  );
+}
+
+async function concatAudioSegments(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ffmpeg: any,
+  segments: { start: number; end: number }[],
+  inputName: string,
+  onProgress?: ProgressCallback,
+): Promise<string> {
+  if (segments.length === 1) {
+    const s = segments[0];
+    onProgress?.("Cutting audio…", 22);
+    await cutAudioClip(
+      ffmpeg,
+      inputName,
+      s.start,
+      s.end - s.start,
+      "merged-audio.webm",
+    );
+    return "merged-audio.webm";
+  }
+
+  const clipNames: string[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const name = `aclip${i}.webm`;
+    onProgress?.(`Extracting audio ${i + 1}/${segments.length}…`, 18 + i * 4);
+    await cutAudioClip(ffmpeg, inputName, s.start, s.end - s.start, name);
+    clipNames.push(name);
+  }
+
+  const list = clipNames.map((n) => `file '${n}'`).join("\n");
+  await ffmpeg.writeFile("aconcat.txt", new TextEncoder().encode(list));
+  await execChecked(
+    ffmpeg,
+    [
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      "aconcat.txt",
+      "-c:a",
+      "copy",
+      "merged-audio.webm",
+    ],
+    "Merge audio",
+  );
+
+  for (const n of clipNames) await ffmpeg.deleteFile(n).catch(() => undefined);
+  await ffmpeg.deleteFile("aconcat.txt").catch(() => undefined);
+  return "merged-audio.webm";
+}
+
 async function tryEncodeWithTiers(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ffmpeg: any,
@@ -487,6 +589,7 @@ async function tryEncodeWithTiers(
   mergedName: string,
   totalDuration: number,
   onProgress?: ProgressCallback,
+  mergedAudioName: string | null = null,
 ): Promise<{ data: Uint8Array; tier: FilterTier }> {
   const tiers: FilterTier[] = hasVideoEffects(config)
     ? effectFilterTiers()
@@ -507,6 +610,7 @@ async function tryEncodeWithTiers(
         0,
         onProgress,
         tier,
+        mergedAudioName,
       );
       return { data, tier };
     } catch (err) {
@@ -525,6 +629,7 @@ async function tryEncodeWithTiers(
       1,
       onProgress,
       fallbackTier,
+      mergedAudioName,
     );
     return { data, tier: fallbackTier };
   } catch (err) {
@@ -555,6 +660,21 @@ async function runFfmpegPipeline(
     lightEncode,
   );
 
+  const audioSegs = config.audioSegments?.filter((s) => s.end > s.start);
+  const separateAudio =
+    !!audioSegs &&
+    audioSegs.length > 0 &&
+    !segmentsEqual(segments, audioSegs);
+  let mergedAudioName: string | null = null;
+  if (separateAudio && audioSegs) {
+    mergedAudioName = await concatAudioSegments(
+      ffmpeg,
+      audioSegs,
+      inputName,
+      onProgress,
+    );
+  }
+
   await ffmpeg.deleteFile(inputName).catch(() => undefined);
 
   if (config.watermark) {
@@ -573,6 +693,7 @@ async function runFfmpegPipeline(
       mergedName,
       totalDuration,
       onProgress,
+      mergedAudioName,
     );
     data = encoded.data;
     filterTier = encoded.tier;
@@ -612,14 +733,17 @@ async function runFfmpegPipeline(
         attempt,
         onProgress,
         filterTier,
+        mergedAudioName,
       );
       result = toBlob(data, mime);
       attempt += 1;
     }
   }
 
-  await ffmpeg.deleteFile(inputName).catch(() => undefined);
   await ffmpeg.deleteFile(mergedName).catch(() => undefined);
+  if (mergedAudioName) {
+    await ffmpeg.deleteFile(mergedAudioName).catch(() => undefined);
+  }
   if (config.watermark) await ffmpeg.deleteFile("logo.png").catch(() => undefined);
   if (config.sticker) await ffmpeg.deleteFile("sticker.png").catch(() => undefined);
 

@@ -12,6 +12,8 @@ type SegmentTimelineProps = {
   currentTime: number;
   zoom: number;
   disabled?: boolean;
+  label?: string;
+  variant?: "video" | "audio";
   onSelect: (id: string) => void;
   onSeek: (time: number) => void;
   onTrimStart: (id: string, time: number) => void;
@@ -29,6 +31,8 @@ export function SegmentTimeline({
   currentTime,
   zoom,
   disabled,
+  label,
+  variant = "video",
   onSelect,
   onSeek,
   onTrimStart,
@@ -95,17 +99,20 @@ export function SegmentTimeline({
     onSeek(timeFromClientX(e.clientX));
   };
 
+  const isAudio = variant === "audio";
   const kept = segments.reduce((s, seg) => s + (seg.end - seg.start), 0);
 
   return (
     <div className="space-y-2 select-none">
       <div className="flex items-center justify-between">
         <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
-          Timeline
+          {label ?? (isAudio ? "Audio track" : "Video track")}
         </p>
         <p className="font-mono text-[10px] text-gray-500">
           {segments.length} clip{segments.length !== 1 ? "s" : ""} ·{" "}
-          <span className="text-emerald-400/90">
+          <span
+            className={isAudio ? "text-amber-400/90" : "text-emerald-400/90"}
+          >
             {formatRecordingTime(kept * 1000, true)} kept
           </span>
         </p>
@@ -115,9 +122,10 @@ export function SegmentTimeline({
         <div
           ref={trackRef}
           role="slider"
-          aria-label="Segment timeline"
+          aria-label={isAudio ? "Audio timeline" : "Video timeline"}
           className={cn(
-            "relative h-[4.5rem] min-w-full cursor-pointer",
+            "relative min-w-full cursor-pointer",
+            isAudio ? "h-[3.25rem]" : "h-[4.5rem]",
             disabled && "pointer-events-none opacity-50",
           )}
           style={{ width: `${zoom * 100}%` }}
@@ -126,9 +134,19 @@ export function SegmentTimeline({
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
         >
-          <div className="absolute inset-x-0 bottom-0 top-7 bg-gradient-to-b from-gray-900/30 to-gray-950" />
+          <div
+            className={cn(
+              "absolute inset-x-0 bottom-0 bg-gradient-to-b from-gray-900/30 to-gray-950",
+              isAudio ? "top-5" : "top-7",
+            )}
+          />
 
-          <div className="absolute inset-x-3 top-0 flex h-7 items-end justify-between border-b border-gray-800/50 pb-1">
+          <div
+            className={cn(
+              "absolute inset-x-3 top-0 flex items-end justify-between border-b border-gray-800/50 pb-1",
+              isAudio ? "h-5" : "h-7",
+            )}
+          >
             {Array.from({ length: 4 * zoom + 1 }, (_, i) => {
               const r = i / (4 * zoom);
               return (
@@ -143,11 +161,23 @@ export function SegmentTimeline({
             })}
           </div>
 
-          <div className="absolute inset-x-2 bottom-2 top-8 rounded bg-gray-900/50" />
+          <div
+            className={cn(
+              "absolute inset-x-2 bottom-2 rounded bg-gray-900/50",
+              isAudio ? "top-5" : "top-8",
+              isAudio &&
+                "bg-[repeating-linear-gradient(90deg,rgba(251,191,36,0.06)_0px,rgba(251,191,36,0.06)_2px,transparent_2px,transparent_6px)]",
+            )}
+          />
 
           {/* Removed / gap regions */}
           {segments.length > 0 && (
-            <RemovedRegions duration={duration} segments={segments} pct={pct} />
+            <RemovedRegions
+              duration={duration}
+              segments={segments}
+              pct={pct}
+              isAudio={isAudio}
+            />
           )}
 
           {segments.map((seg, i) => {
@@ -157,10 +187,15 @@ export function SegmentTimeline({
                 key={seg.id}
                 data-segment
                 className={cn(
-                  "absolute bottom-2 top-8 rounded border transition-colors",
+                  "absolute bottom-2 rounded border transition-colors",
+                  isAudio ? "top-5" : "top-8",
                   selected
-                    ? "z-10 border-blue-400/90 bg-blue-500/30 shadow-[inset_0_0_0_1px_rgba(96,165,250,0.35)]"
-                    : "border-emerald-700/60 bg-emerald-600/20 hover:bg-emerald-600/30",
+                    ? isAudio
+                      ? "z-10 border-amber-400/90 bg-amber-500/25 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.35)]"
+                      : "z-10 border-blue-400/90 bg-blue-500/30 shadow-[inset_0_0_0_1px_rgba(96,165,250,0.35)]"
+                    : isAudio
+                      ? "border-amber-700/50 bg-amber-600/15 hover:bg-amber-600/25"
+                      : "border-emerald-700/60 bg-emerald-600/20 hover:bg-emerald-600/30",
                 )}
                 style={{
                   left: `calc(${pct(seg.start)}% * 0.96 + 2%)`,
@@ -232,10 +267,12 @@ function RemovedRegions({
   duration,
   segments,
   pct,
+  isAudio,
 }: {
   duration: number;
   segments: TimelineSegment[];
   pct: (t: number) => number;
+  isAudio?: boolean;
 }) {
   const gaps: { start: number; end: number }[] = [];
   let cursor = 0;
@@ -250,7 +287,10 @@ function RemovedRegions({
       {gaps.map((g) => (
         <div
           key={`${g.start}-${g.end}`}
-          className="absolute bottom-2 top-8 rounded bg-red-950/40"
+          className={cn(
+            "absolute bottom-2 rounded",
+            isAudio ? "top-5 bg-red-950/35" : "top-8 bg-red-950/40",
+          )}
           style={{
             left: `calc(${pct(g.start)}% * 0.96 + 2%)`,
             width: `calc(${pct(g.end - g.start)}% * 0.96)`,

@@ -3,7 +3,16 @@ import type { WatermarkPosition } from "@/utils/watermarkCanvas";
 
 type ProgressCallback = (message: string, ratio?: number) => void;
 
-type OverlaySpec = {
+type FreeformOverlaySpec = {
+  pngBytes: Uint8Array;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+};
+
+type CornerOverlaySpec = {
   pngBytes: Uint8Array;
   position: WatermarkPosition;
   opacity: number;
@@ -80,10 +89,10 @@ function fadeAlpha(
   return Math.max(0, Math.min(1, a));
 }
 
-function drawOverlay(
+function drawCornerOverlay(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
-  spec: OverlaySpec,
+  spec: CornerOverlaySpec,
   cw: number,
   ch: number,
 ): void {
@@ -97,6 +106,25 @@ function drawOverlay(
   ctx.save();
   ctx.globalAlpha = spec.opacity;
   ctx.drawImage(img, x, y, ow, oh);
+  ctx.restore();
+}
+
+function drawFreeformOverlay(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  spec: FreeformOverlaySpec,
+  cw: number,
+  ch: number,
+): void {
+  const ow = cw * spec.scale;
+  const oh = (img.height / img.width) * ow;
+  const cx = cw * spec.x;
+  const cy = ch * spec.y;
+  ctx.save();
+  ctx.globalAlpha = spec.opacity;
+  ctx.translate(cx, cy);
+  ctx.rotate((spec.rotation * Math.PI) / 180);
+  ctx.drawImage(img, -ow / 2, -oh / 2, ow, oh);
   ctx.restore();
 }
 
@@ -251,10 +279,10 @@ export async function exportStudioViaCanvas(
     outTime = outputTimeAt(video.currentTime, segIdx);
     drawFrame(ctx, video, config, outW, outH, outTime, totalOut);
     if (wmImg && config.watermark) {
-      drawOverlay(ctx, wmImg, config.watermark, outW, outH);
+      drawCornerOverlay(ctx, wmImg, config.watermark, outW, outH);
     }
     if (stImg && config.sticker) {
-      drawOverlay(ctx, stImg, config.sticker, outW, outH);
+      drawFreeformOverlay(ctx, stImg, config.sticker, outW, outH);
     }
     const pct = totalOut > 0 ? Math.min(95, 25 + (outTime / totalOut) * 70) : 50;
     onProgress?.("Rendering effects in browser…", Math.round(pct));
