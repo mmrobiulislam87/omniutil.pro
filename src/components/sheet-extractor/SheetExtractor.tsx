@@ -1,9 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import JSZip from "jszip";
 import { ToolStateWrapper } from "@/components/ui/ToolStateWrapper";
+import { absoluteUrl } from "@/lib/site";
 
-const BOOKMARKLET_CODE = `javascript:(function(){const imgs=Array.from(document.querySelectorAll('img')).map(img=>img.src).filter(src=>src.match(/\\.(jpeg|jpg|gif|png|webp)/i)||src.startsWith('data:image'));if(imgs.length===0){alert('No images found on this page! Make sure to scroll down.');return;}alert('OmniUtil Magic: Found '+imgs.length+' images. Loading compiler...');const script=document.createElement('script');script.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';script.onload=function(){const zip=new JSZip();let completed=0;imgs.forEach((url,i)=>{fetch(url).then(res=>res.blob()).then(blob=>{const ext=url.split('.').pop().split('?')[0]||'png';zip.file('sheet_page_'+(i+1)+'.'+ext,blob);}).catch(()=>console.log('Skipped image due to security')).finally(()=>{completed++;if(completed===imgs.length){zip.generateAsync({type:'blob'}).then(content=>{const a=document.createElement('a');a.href=URL.createObjectURL(content);a.download='OmniUtil_Extracted_Sheet.zip';a.click();});}});});};document.head.appendChild(script);})();`;
+function buildBookmarkletCode(): string {
+  const hub = absoluteUrl("/sheet-extractor");
+  return `javascript:(function(){const images=[];document.querySelectorAll('img, div, md-content').forEach(el=>{const src=el.src||(el.style.backgroundImage&&el.style.backgroundImage.slice(4,-1).replace(/"/g,""));if(src&&(src.match(/\\.(jpeg|jpg|png|webp)/i)||src.startsWith('data:image'))){if(!images.includes(src))images.push(src);}});if(images.length===0){alert('No sheet images detected! Make sure the popup is fully open and visible on screen.');return;}alert('OmniUtil Magic: Found '+images.length+' pages! Redirecting to your secure download hub...');const p=encodeURIComponent(JSON.stringify(images));const hub='${hub}';window.location.href=p.length>1800?hub+'#'+p:hub+'?links='+p;})();`;
+}
 
 function parseImageLinks(rawHtml: string): string[] {
   if (!rawHtml.trim()) return [];
@@ -22,23 +28,59 @@ function parseImageLinks(rawHtml: string): string[] {
   return links;
 }
 
-export function SheetExtractor() {
+function parseIncomingLinks(raw: string): string[] {
+  const decoded = decodeURIComponent(raw);
+  const parsed: unknown = JSON.parse(decoded);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is string => typeof item === "string");
+}
+
+function SheetExtractorContent() {
+  const searchParams = useSearchParams();
+  const bookmarkletCode = useMemo(() => buildBookmarkletCode(), []);
+
   const [activeTab, setActiveTab] = useState<"bookmarklet" | "parser">(
     "bookmarklet",
   );
   const [htmlInput, setHtmlInput] = useState("");
   const [extractedLinks, setExtractedLinks] = useState<string[]>([]);
+  const [bridged, setBridged] = useState(false);
   const [copied, setCopied] = useState(false);
   const [linksCopied, setLinksCopied] = useState(false);
+  const [zipping, setZipping] = useState(false);
+  const [zipError, setZipError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const rawQuery = searchParams.get("links");
+    const rawHash =
+      typeof window !== "undefined" && window.location.hash.length > 1
+        ? window.location.hash.slice(1)
+        : null;
+    const raw = rawQuery ?? rawHash;
+    if (!raw) return;
+
+    try {
+      const parsedLinks = parseIncomingLinks(raw);
+      if (parsedLinks.length > 0) {
+        setExtractedLinks(parsedLinks);
+        setActiveTab("parser");
+        setBridged(true);
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    } catch {
+      /* invalid payload */
+    }
+  }, [searchParams]);
 
   const handleParseHtml = (rawHtml: string) => {
     setHtmlInput(rawHtml);
+    setBridged(false);
     setExtractedLinks(parseImageLinks(rawHtml));
   };
 
   const copyBookmarklet = async () => {
     try {
-      await navigator.clipboard.writeText(BOOKMARKLET_CODE);
+      await navigator.clipboard.writeText(bookmarkletCode);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -57,6 +99,50 @@ export function SheetExtractor() {
     }
   };
 
+  const downloadZip = useCallback(async () => {
+    if (extractedLinks.length === 0 || zipping) return;
+    setZipping(true);
+    setZipError(null);
+
+    try {
+      const zip = new JSZip();
+      let saved = 0;
+
+      await Promise.all(
+        extractedLinks.map(async (url, i) => {
+          try {
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const blob = await res.blob();
+            const ext = url.split(".").pop()?.split("?")[0] || "png";
+            zip.file(`sheet_page_${i + 1}.${ext}`, blob);
+            saved += 1;
+          } catch {
+            /* CORS or network — skip */
+          }
+        }),
+      );
+
+      if (saved === 0) {
+        setZipError(
+          "Could not fetch images for ZIP (site may block cross-origin). Open previews and save manually, or copy URLs.",
+        );
+        return;
+      }
+
+      const content = await zip.generateAsync({ type: "blob" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(content);
+      a.download = `OmniUtil_Extracted_Sheet_${Date.now()}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      setZipError("ZIP build failed. Try again or save images from the grid.");
+    } finally {
+      setZipping(false);
+    }
+  }, [extractedLinks, zipping]);
+
   return (
     <div className="space-y-6">
       <div className="flex border-b border-gray-800">
@@ -69,7 +155,7 @@ export function SheetExtractor() {
               : "border-transparent text-gray-500 hover:text-gray-300"
           }`}
         >
-          📱 Method 1: Magic Bookmarklet (Best for Mobile & PC)
+          📱 Method 1: Hijack & Bridge Bookmarklet
         </button>
         <button
           type="button"
@@ -88,36 +174,32 @@ export function SheetExtractor() {
         <div className="space-y-4">
           <div className="space-y-3 rounded-xl border border-blue-900/40 bg-blue-950/20 p-4 text-sm text-gray-300">
             <h4 className="flex items-center gap-2 font-bold text-blue-400">
-              📱 মোবাইল ইউজারদের ম্যাজিক ট্রিক (How to Use on Phone):
+              📱 Hijack & Bridge — মোবাইল ও পিসি গাইড
             </h4>
             <ol className="list-inside list-decimal space-y-1.5 text-xs text-gray-400">
               <li>
-                নিচের{" "}
-                <span className="font-semibold text-gray-200">
-                  Copy Magic Code
-                </span>{" "}
-                বাটনে ক্লিক করে কোডটি কপি করুন।
+                <span className="font-semibold text-gray-200">Copy Magic Code</span>{" "}
+                বাটনে ক্লিক করে কোড কপি করুন।
               </li>
               <li>
-                আপনার ব্রাউজারে যেকোনো একটি পেজকে বুকমার্ক হিসেবে সেভ করুন এবং
-                সেটির নাম দিন:{" "}
-                <span className="font-bold text-blue-400">🪄 Extract Sheet</span>
+                বুকমার্ক সেভ করুন নাম:{" "}
+                <span className="font-bold text-blue-400">🪄 Extract Sheet</span> —
+                URL বক্সে কোড পেস্ট করুন।
               </li>
               <li>
-                বুকমার্কটি এডিট করে তার URL বক্সে থাকা আগের লিংক মুছে ওমনিইউটিলের
-                এই কপি করা কোডটি পেস্ট করে দিন।
+                বিদ্যাবাড়ি/টার্গেট সাইটে যান, লেকচার লিংকে ক্লিক করে{" "}
+                <span className="font-semibold text-gray-200">পপ-আপ খুলে</span> সব
+                স্লাইড স্ক্রিনে দেখান।
               </li>
               <li>
-                এবার বিদ্যাবাড়ি বা আপনার টার্গেট লেকচার পেজে যান, স্ক্রোল করে সব
-                ইমেজ লোড করুন।
+                Address bar এ <span className="font-bold text-blue-400">Extract Sheet</span>{" "}
+                টাইপ করে বুকমার্ক চালান।
               </li>
               <li>
-                ব্রাউজারের উপরের{" "}
-                <span className="font-semibold text-gray-200">Address Bar</span> এ
-                গিয়ে টাইপ করুন{" "}
-                <span className="font-bold text-blue-400">Extract Sheet</span> এবং
-                নিচে ভেসে ওঠা বুকমার্কটিতে ক্লিক করুন। ব্যস, জিপ ফাইল অটো
-                ডাউনলোড!
+                কোড ছবির লিংক হাইজ্যাক করে{" "}
+                <span className="font-semibold text-emerald-400">OmniUtil</span> এ
+                রিডাইরেক্ট করবে — সেখানে গ্রিড প্রিভিউ ও ZIP ডাউনলোড। কোনো
+                এক্সটার্নাল স্ক্রিপ্ট লোড হয় না (CSP-safe)।
               </li>
             </ol>
           </div>
@@ -125,10 +207,10 @@ export function SheetExtractor() {
           <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-gray-800 bg-[#0B0F19] p-4 md:flex-row">
             <div className="space-y-1 text-center md:text-left">
               <span className="text-xs font-bold uppercase tracking-wide text-emerald-400">
-                OmniUtil Injector Core
+                OmniUtil Bridge Injector (no external scripts)
               </span>
               <p className="max-w-md truncate font-mono text-xs text-gray-500 md:max-w-xl">
-                {BOOKMARKLET_CODE}
+                {bookmarkletCode}
               </p>
             </div>
             <button
@@ -148,17 +230,26 @@ export function SheetExtractor() {
 
       {activeTab === "parser" && (
         <div className="space-y-4">
-          <div className="flex flex-col space-y-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
-              Paste HTML Source (Ctrl + U Code)
-            </span>
-            <textarea
-              value={htmlInput}
-              onChange={(e) => handleParseHtml(e.target.value)}
-              placeholder="Paste the webpage HTML source code here to extract asset links..."
-              className="h-48 w-full resize-none rounded-xl border border-gray-800 bg-[#0B0F19] p-4 font-mono text-sm text-gray-300 placeholder-gray-600 focus:border-blue-500/50 focus:outline-none"
-            />
-          </div>
+          {bridged && extractedLinks.length > 0 && (
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 text-sm text-emerald-300">
+              ✓ Bridge successful — {extractedLinks.length} sheet page
+              {extractedLinks.length === 1 ? "" : "s"} received from the target site.
+            </div>
+          )}
+
+          {!bridged && (
+            <div className="flex flex-col space-y-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                Paste HTML Source (Ctrl + U Code)
+              </span>
+              <textarea
+                value={htmlInput}
+                onChange={(e) => handleParseHtml(e.target.value)}
+                placeholder="Paste the webpage HTML source code here to extract asset links..."
+                className="h-48 w-full resize-none rounded-xl border border-gray-800 bg-[#0B0F19] p-4 font-mono text-sm text-gray-300 placeholder-gray-600 focus:border-blue-500/50 focus:outline-none"
+              />
+            </div>
+          )}
 
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -166,30 +257,60 @@ export function SheetExtractor() {
                 Extracted Assets ({extractedLinks.length})
               </span>
               {extractedLinks.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => void copyExtractedLinks()}
-                  className="rounded-lg border border-gray-700 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-400 transition hover:border-emerald-500/40 hover:text-emerald-400"
-                >
-                  {linksCopied ? "✓ Copied URLs" : "Copy all URLs"}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void copyExtractedLinks()}
+                    className="rounded-lg border border-gray-700 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-400 transition hover:border-emerald-500/40 hover:text-emerald-400"
+                  >
+                    {linksCopied ? "✓ Copied URLs" : "Copy all URLs"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={zipping}
+                    onClick={() => void downloadZip()}
+                    className="rounded-lg border border-blue-500/40 bg-blue-600/20 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-300 transition hover:bg-blue-600/30 disabled:opacity-50"
+                  >
+                    {zipping ? "Building ZIP…" : "Download ZIP"}
+                  </button>
+                </div>
               )}
             </div>
+
+            {zipError && (
+              <p className="text-xs text-amber-400" role="alert">
+                {zipError}
+              </p>
+            )}
+
             <div className="relative min-h-32 w-full overflow-hidden rounded-xl border border-gray-800 bg-[#0B0F19]">
               <ToolStateWrapper
                 isEmpty={extractedLinks.length === 0}
-                emptyMessage="No asset links extracted yet. Paste HTML above."
+                emptyMessage={
+                  bridged
+                    ? "Waiting for bridged links…"
+                    : "No asset links yet. Run the bookmarklet or paste HTML above."
+                }
               >
-                <div className="grid max-h-64 grid-cols-1 gap-2 overflow-y-auto p-4 sm:grid-cols-2">
+                <div className="grid max-h-[28rem] grid-cols-2 gap-3 overflow-y-auto p-4 sm:grid-cols-3 md:grid-cols-4">
                   {extractedLinks.map((link, idx) => (
                     <a
                       key={`${idx}-${link.slice(0, 48)}`}
                       href={link}
                       target="_blank"
                       rel="noreferrer"
-                      className="truncate rounded-lg border border-emerald-900/30 bg-emerald-950/10 p-2 font-mono text-xs text-emerald-400 transition hover:bg-emerald-950/30"
+                      className="group overflow-hidden rounded-lg border border-gray-800 bg-gray-900/50 transition hover:border-emerald-500/40"
                     >
-                      📄 Page {idx + 1}: {link}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={link}
+                        alt={`Sheet page ${idx + 1}`}
+                        className="aspect-[3/4] w-full object-cover object-top"
+                        loading="lazy"
+                      />
+                      <p className="truncate p-2 font-mono text-[10px] text-emerald-400">
+                        Page {idx + 1}
+                      </p>
                     </a>
                   ))}
                 </div>
@@ -200,4 +321,8 @@ export function SheetExtractor() {
       )}
     </div>
   );
+}
+
+export function SheetExtractor() {
+  return <SheetExtractorContent />;
 }
