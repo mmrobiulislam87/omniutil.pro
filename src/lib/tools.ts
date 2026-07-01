@@ -254,11 +254,11 @@ export const TOOLS: Tool[] = [
     name: "Sheet Extractor",
     dashboardTitle: "Web Sheet & Image Extractor",
     description:
-      "Extract locked lecture sheets, presentation slides, and continuous images from e-learning platforms instantly. Bookmarklet for mobile & desktop, plus HTML source parser. 100% serverless and private.",
+      "Extract locked canvas lecture sheets, presentation slides, and images from e-learning platforms. Canvas-to-pixel capture with CSP-safe bridge to OmniUtil for ZIP download.",
     href: "/sheet-extractor",
     icon: Images,
     emoji: "🪄",
-    badge: "v1.0",
+    badge: "v1.1 Canvas",
     category: "Utility",
     tags: [
       "sheet extractor",
@@ -268,7 +268,8 @@ export const TOOLS: Tool[] = [
       "lecture",
       "zip download",
       "html parser",
-      "slides",
+      "canvas",
+      "pdf viewer",
       "privacy",
       "mobile",
     ],

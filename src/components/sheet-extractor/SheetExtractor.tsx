@@ -4,11 +4,13 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import JSZip from "jszip";
 import { ToolStateWrapper } from "@/components/ui/ToolStateWrapper";
-import { absoluteUrl } from "@/lib/site";
+import { absoluteUrl, siteConfig } from "@/lib/site";
+
+const HUB_ORIGIN = new URL(siteConfig.url).origin;
 
 function buildBookmarkletCode(): string {
   const hub = absoluteUrl("/sheet-extractor");
-  return `javascript:(function(){const images=[];document.querySelectorAll('img, div, md-content').forEach(el=>{const src=el.src||(el.style.backgroundImage&&el.style.backgroundImage.slice(4,-1).replace(/"/g,""));if(src&&(src.match(/\\.(jpeg|jpg|png|webp)/i)||src.startsWith('data:image'))){if(!images.includes(src))images.push(src);}});if(images.length===0){alert('No sheet images detected! Make sure the popup is fully open and visible on screen.');return;}alert('OmniUtil Magic: Found '+images.length+' pages! Redirecting to your secure download hub...');const p=encodeURIComponent(JSON.stringify(images));const hub='${hub}';window.location.href=p.length>1800?hub+'#'+p:hub+'?links='+p;})();`;
+  return `javascript:(function(){const hub='${hub}';const origin='${HUB_ORIGIN}';let items=[];let canvases=Array.from(document.querySelectorAll('canvas.page, #pdf-container canvas'));if(canvases.length===0){canvases=Array.from(document.querySelectorAll('canvas')).filter(c=>c.width>=200&&c.height>=200);}if(canvases.length>0){try{items=canvases.map(c=>c.toDataURL('image/png'));}catch(e){alert('Canvas capture blocked. Try scrolling the sheet into view.');return;}alert('OmniUtil Vision: Captured '+items.length+' canvas sheet page(s).');}else{items=Array.from(document.querySelectorAll('img')).map(i=>i.src).filter(s=>s&&(s.match(/\\.(jpeg|jpg|gif|png|webp)/i)||s.startsWith('data:image')));}if(items.length===0){alert('No sheet pages found! Open the popup and scroll so pages render.');return;}const enc=encodeURIComponent(JSON.stringify(items));if(enc.length<1200000){window.location.href=enc.length>1800?hub+'#data='+enc:hub+'?data='+enc;return;}alert('OmniUtil: '+items.length+' pages — opening secure hub...');const w=window.open(hub+'?bridge=1','_blank');if(!w){alert('Allow popups, then run the bookmarklet again.');return;}let n=0;const t=setInterval(()=>{n++;if(n>40){clearInterval(t);return;}try{w.postMessage({type:'omniutil-sheet-extract',images:items},origin);clearInterval(t);}catch(e){}},500);})();`;
 }
 
 function parseImageLinks(rawHtml: string): string[] {
@@ -28,11 +30,36 @@ function parseImageLinks(rawHtml: string): string[] {
   return links;
 }
 
-function parseIncomingLinks(raw: string): string[] {
-  const decoded = decodeURIComponent(raw);
+function normalizePayloadRaw(raw: string): string {
+  if (raw.startsWith("data=")) return raw.slice(5);
+  if (raw.startsWith("links=")) return raw.slice(6);
+  return raw;
+}
+
+function parseIncomingPayload(raw: string): string[] {
+  const decoded = decodeURIComponent(normalizePayloadRaw(raw));
   const parsed: unknown = JSON.parse(decoded);
   if (!Array.isArray(parsed)) return [];
   return parsed.filter((item): item is string => typeof item === "string");
+}
+
+function ingestPayload(
+  raw: string,
+  apply: (links: string[]) => void,
+): boolean {
+  try {
+    const parsed = parseIncomingPayload(raw);
+    if (parsed.length === 0) return false;
+    apply(parsed);
+    window.history.replaceState(null, "", window.location.pathname);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isDataImage(src: string): boolean {
+  return src.startsWith("data:image");
 }
 
 function SheetExtractorContent() {
@@ -45,36 +72,63 @@ function SheetExtractorContent() {
   const [htmlInput, setHtmlInput] = useState("");
   const [extractedLinks, setExtractedLinks] = useState<string[]>([]);
   const [bridged, setBridged] = useState(false);
+  const [canvasMode, setCanvasMode] = useState(false);
   const [copied, setCopied] = useState(false);
   const [linksCopied, setLinksCopied] = useState(false);
   const [zipping, setZipping] = useState(false);
   const [zipError, setZipError] = useState<string | null>(null);
+  const [bridgeWaiting, setBridgeWaiting] = useState(false);
+
+  const applyExtracted = useCallback((links: string[]) => {
+    setExtractedLinks(links);
+    setActiveTab("parser");
+    setBridged(true);
+    setCanvasMode(links.length > 0 && links.every(isDataImage));
+  }, []);
 
   useEffect(() => {
-    const rawQuery = searchParams.get("links");
+    const rawQuery =
+      searchParams.get("data") ?? searchParams.get("links") ?? null;
     const rawHash =
       typeof window !== "undefined" && window.location.hash.length > 1
         ? window.location.hash.slice(1)
         : null;
     const raw = rawQuery ?? rawHash;
-    if (!raw) return;
+    if (raw) ingestPayload(raw, applyExtracted);
+  }, [searchParams, applyExtracted]);
 
-    try {
-      const parsedLinks = parseIncomingLinks(raw);
-      if (parsedLinks.length > 0) {
-        setExtractedLinks(parsedLinks);
-        setActiveTab("parser");
-        setBridged(true);
-        window.history.replaceState(null, "", window.location.pathname);
-      }
-    } catch {
-      /* invalid payload */
-    }
-  }, [searchParams]);
+  useEffect(() => {
+    if (searchParams.get("bridge") !== "1") return;
+
+    setBridgeWaiting(true);
+    setActiveTab("parser");
+    setBridged(true);
+
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== HUB_ORIGIN) return;
+      const data = event.data as { type?: string; images?: unknown };
+      if (data?.type !== "omniutil-sheet-extract") return;
+      if (!Array.isArray(data.images)) return;
+
+      const images = data.images.filter(
+        (item): item is string => typeof item === "string",
+      );
+      if (images.length === 0) return;
+
+      applyExtracted(images);
+      setBridgeWaiting(false);
+      window.history.replaceState(null, "", window.location.pathname);
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [searchParams, applyExtracted]);
 
   const handleParseHtml = (rawHtml: string) => {
     setHtmlInput(rawHtml);
     setBridged(false);
+    setCanvasMode(false);
+    setBridgeWaiting(false);
     setExtractedLinks(parseImageLinks(rawHtml));
   };
 
@@ -91,7 +145,10 @@ function SheetExtractorContent() {
   const copyExtractedLinks = async () => {
     if (extractedLinks.length === 0) return;
     try {
-      await navigator.clipboard.writeText(extractedLinks.join("\n"));
+      const text = canvasMode
+        ? `${extractedLinks.length} canvas pages captured (data URLs — use Download ZIP)`
+        : extractedLinks.join("\n");
+      await navigator.clipboard.writeText(text);
       setLinksCopied(true);
       setTimeout(() => setLinksCopied(false), 2000);
     } catch {
@@ -109,12 +166,22 @@ function SheetExtractorContent() {
       let saved = 0;
 
       await Promise.all(
-        extractedLinks.map(async (url, i) => {
+        extractedLinks.map(async (src, i) => {
           try {
-            const res = await fetch(url);
+            if (isDataImage(src)) {
+              const base64 = src.split(",")[1];
+              const ext =
+                src.match(/data:image\/([^;]+)/)?.[1]?.replace("jpeg", "jpg") ??
+                "png";
+              zip.file(`sheet_page_${i + 1}.${ext}`, base64, { base64: true });
+              saved += 1;
+              return;
+            }
+
+            const res = await fetch(src);
             if (!res.ok) return;
             const blob = await res.blob();
-            const ext = url.split(".").pop()?.split("?")[0] || "png";
+            const ext = src.split(".").pop()?.split("?")[0] || "png";
             zip.file(`sheet_page_${i + 1}.${ext}`, blob);
             saved += 1;
           } catch {
@@ -125,7 +192,9 @@ function SheetExtractorContent() {
 
       if (saved === 0) {
         setZipError(
-          "Could not fetch images for ZIP (site may block cross-origin). Open previews and save manually, or copy URLs.",
+          canvasMode
+            ? "ZIP build failed. Try again."
+            : "Could not fetch images for ZIP (site may block cross-origin). Use canvas bookmarklet or save from grid.",
         );
         return;
       }
@@ -141,7 +210,7 @@ function SheetExtractorContent() {
     } finally {
       setZipping(false);
     }
-  }, [extractedLinks, zipping]);
+  }, [extractedLinks, zipping, canvasMode]);
 
   return (
     <div className="space-y-6">
@@ -155,7 +224,7 @@ function SheetExtractorContent() {
               : "border-transparent text-gray-500 hover:text-gray-300"
           }`}
         >
-          📱 Method 1: Hijack & Bridge Bookmarklet
+          📱 Method 1: Canvas + Bridge Bookmarklet
         </button>
         <button
           type="button"
@@ -174,32 +243,27 @@ function SheetExtractorContent() {
         <div className="space-y-4">
           <div className="space-y-3 rounded-xl border border-blue-900/40 bg-blue-950/20 p-4 text-sm text-gray-300">
             <h4 className="flex items-center gap-2 font-bold text-blue-400">
-              📱 Hijack & Bridge — মোবাইল ও পিসি গাইড
+              🪄 ক্যানভাস শিট এক্সট্র্যাক্ট — Hijack & Bridge (CSP-safe)
             </h4>
             <ol className="list-inside list-decimal space-y-1.5 text-xs text-gray-400">
               <li>
                 <span className="font-semibold text-gray-200">Copy Magic Code</span>{" "}
-                বাটনে ক্লিক করে কোড কপি করুন।
+                কপি করে <span className="font-bold text-blue-400">🪄 Extract Sheet</span>{" "}
+                বুকমার্কে পেস্ট করুন।
               </li>
               <li>
-                বুকমার্ক সেভ করুন নাম:{" "}
-                <span className="font-bold text-blue-400">🪄 Extract Sheet</span> —
-                URL বক্সে কোড পেস্ট করুন।
-              </li>
-              <li>
-                বিদ্যাবাড়ি/টার্গেট সাইটে যান, লেকচার লিংকে ক্লিক করে{" "}
-                <span className="font-semibold text-gray-200">পপ-আপ খুলে</span> সব
-                স্লাইড স্ক্রিনে দেখান।
+                বিদ্যাবাড়ির পপ-আপ শিট ওপেন করুন — উপর থেকে নিচে স্ক্রোল করুন যাতে{" "}
+                <span className="font-semibold text-gray-200">canvas.page</span>{" "}
+                এলিমেন্টগুলো রেন্ডার হয়।
               </li>
               <li>
                 Address bar এ <span className="font-bold text-blue-400">Extract Sheet</span>{" "}
                 টাইপ করে বুকমার্ক চালান।
               </li>
               <li>
-                কোড ছবির লিংক হাইজ্যাক করে{" "}
-                <span className="font-semibold text-emerald-400">OmniUtil</span> এ
-                রিডাইরেক্ট করবে — সেখানে গ্রিড প্রিভিউ ও ZIP ডাউনলোড। কোনো
-                এক্সটার্নাল স্ক্রিপ্ট লোড হয় না (CSP-safe)।
+                কোড প্রথমে <span className="text-emerald-400">canvas</span> থেকে
+                পিক্সেল তুলবে (লোগো/আইকন স্কিপ) — তারপর OmniUtil-এ ব্রিজ করবে।
+                ZIP এখানে বানানো হয় (কোনো CDN স্ক্রিপ্ট লোড নয়)।
               </li>
             </ol>
           </div>
@@ -207,7 +271,7 @@ function SheetExtractorContent() {
           <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-gray-800 bg-[#0B0F19] p-4 md:flex-row">
             <div className="space-y-1 text-center md:text-left">
               <span className="text-xs font-bold uppercase tracking-wide text-emerald-400">
-                OmniUtil Bridge Injector (no external scripts)
+                OmniUtil Canvas Core v1.1
               </span>
               <p className="max-w-md truncate font-mono text-xs text-gray-500 md:max-w-xl">
                 {bookmarkletCode}
@@ -230,10 +294,17 @@ function SheetExtractorContent() {
 
       {activeTab === "parser" && (
         <div className="space-y-4">
+          {bridgeWaiting && (
+            <div className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-4 text-sm text-blue-300">
+              Waiting for bridged canvas data from the target tab…
+            </div>
+          )}
+
           {bridged && extractedLinks.length > 0 && (
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 text-sm text-emerald-300">
-              ✓ Bridge successful — {extractedLinks.length} sheet page
-              {extractedLinks.length === 1 ? "" : "s"} received from the target site.
+              ✓ Bridge successful — {extractedLinks.length}{" "}
+              {canvasMode ? "canvas page(s)" : "asset link(s)"} received.
+              {canvasMode && " ZIP download works without CORS limits."}
             </div>
           )}
 
@@ -263,7 +334,7 @@ function SheetExtractorContent() {
                     onClick={() => void copyExtractedLinks()}
                     className="rounded-lg border border-gray-700 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-400 transition hover:border-emerald-500/40 hover:text-emerald-400"
                   >
-                    {linksCopied ? "✓ Copied URLs" : "Copy all URLs"}
+                    {linksCopied ? "✓ Copied" : canvasMode ? "Copy info" : "Copy all URLs"}
                   </button>
                   <button
                     type="button"
@@ -285,34 +356,53 @@ function SheetExtractorContent() {
 
             <div className="relative min-h-32 w-full overflow-hidden rounded-xl border border-gray-800 bg-[#0B0F19]">
               <ToolStateWrapper
-                isEmpty={extractedLinks.length === 0}
+                isEmpty={extractedLinks.length === 0 && !bridgeWaiting}
                 emptyMessage={
-                  bridged
-                    ? "Waiting for bridged links…"
-                    : "No asset links yet. Run the bookmarklet or paste HTML above."
+                  bridgeWaiting
+                    ? "Listening for large canvas export…"
+                    : "No assets yet. Run the bookmarklet or paste HTML above."
                 }
               >
                 <div className="grid max-h-[28rem] grid-cols-2 gap-3 overflow-y-auto p-4 sm:grid-cols-3 md:grid-cols-4">
-                  {extractedLinks.map((link, idx) => (
-                    <a
-                      key={`${idx}-${link.slice(0, 48)}`}
-                      href={link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="group overflow-hidden rounded-lg border border-gray-800 bg-gray-900/50 transition hover:border-emerald-500/40"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={link}
-                        alt={`Sheet page ${idx + 1}`}
-                        className="aspect-[3/4] w-full object-cover object-top"
-                        loading="lazy"
-                      />
-                      <p className="truncate p-2 font-mono text-[10px] text-emerald-400">
-                        Page {idx + 1}
-                      </p>
-                    </a>
-                  ))}
+                  {extractedLinks.map((link, idx) => {
+                    const card = (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={link}
+                          alt={`Sheet page ${idx + 1}`}
+                          className="aspect-[3/4] w-full object-cover object-top"
+                          loading="lazy"
+                        />
+                        <p className="truncate p-2 font-mono text-[10px] text-emerald-400">
+                          Page {idx + 1}
+                          {canvasMode ? " · canvas" : ""}
+                        </p>
+                      </>
+                    );
+                    const className =
+                      "group overflow-hidden rounded-lg border border-gray-800 bg-gray-900/50 transition hover:border-emerald-500/40";
+
+                    if (isDataImage(link)) {
+                      return (
+                        <div key={`${idx}-${link.slice(0, 48)}`} className={className}>
+                          {card}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <a
+                        key={`${idx}-${link.slice(0, 48)}`}
+                        href={link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={className}
+                      >
+                        {card}
+                      </a>
+                    );
+                  })}
                 </div>
               </ToolStateWrapper>
             </div>
