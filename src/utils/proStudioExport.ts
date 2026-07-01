@@ -4,8 +4,10 @@ import { type WatermarkPosition } from "@/utils/watermarkCanvas";
 
 import {
   buildStudioVideoFilter,
+  effectFilterTiers,
   type AspectMode,
   type CropMode,
+  type FilterTier,
   type VideoRotation,
 } from "@/utils/studioFilters";
 import {
@@ -55,7 +57,7 @@ function resetFfmpeg(): void {
 function exportError(err: unknown, fallback: string): Error {
   if (isWasmMemoryError(err)) {
     return new Error(
-      "Video processing ran out of memory. Try a shorter clip, Balanced preset, or disable Shorts/blur effects.",
+      "Video processing ran out of memory. Effects will retry in browser mode automatically.",
     );
   }
   if (err instanceof Error) {
@@ -109,8 +111,32 @@ function presetToQuality(preset: ExportPreset): ExportQuality {
   return "balanced";
 }
 
-function codecArgs(preset: ExportPreset, attempt = 0): string[] {
+function codecArgs(
+  preset: ExportPreset,
+  attempt = 0,
+  useVp8 = false,
+): string[] {
   const crfBump = attempt * 5;
+  if (useVp8) {
+    const crf =
+      preset === "discord" ? 20 + crfBump : preset === "ultra_hd" ? 8 + crfBump : 12 + crfBump;
+    const bv =
+      preset === "discord" ? "900k" : preset === "ultra_hd" ? "2.5M" : "1.5M";
+    return [
+      "-c:v",
+      "libvpx",
+      "-crf",
+      String(crf),
+      "-b:v",
+      bv,
+      "-deadline",
+      "realtime",
+      "-cpu-used",
+      "8",
+      "-threads",
+      "1",
+    ];
+  }
   const wasmVp9 = [
     "-deadline",
     "realtime",
@@ -195,15 +221,20 @@ function buildAtempoChain(speed: number): string {
 
 function hasVideoEffects(config: StudioExportConfig): boolean {
   return (
-    config.aspectMode === "shorts" ||
-    !!config.watermark ||
-    !!config.sticker ||
-    (config.rotation ?? 0) !== 0 ||
-    (config.crop ?? "none") !== "none" ||
-    !!config.flipH ||
-    (config.fadeIn ?? 0) > 0 ||
-    (config.fadeOut ?? 0) > 0
+    config.exportMode !== "audio" &&
+    (config.aspectMode === "shorts" ||
+      !!config.watermark ||
+      !!config.sticker ||
+      (config.rotation ?? 0) !== 0 ||
+      (config.crop ?? "none") !== "none" ||
+      !!config.flipH ||
+      (config.fadeIn ?? 0) > 0 ||
+      (config.fadeOut ?? 0) > 0)
   );
+}
+
+function useVp8Encode(config: StudioExportConfig): boolean {
+  return hasVideoEffects(config);
 }
 
 function isWasmMemoryError(err: unknown): boolean {
@@ -220,7 +251,11 @@ async function cutClip(
   start: number,
   duration: number,
   outputName: string,
+  lightEncode = false,
 ): Promise<void> {
+  const reencodeVideo = lightEncode
+    ? ["-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "1M"]
+    : ["-c:v", "libvpx-vp9", "-b:v", "2M"];
   try {
     await execChecked(
       ffmpeg,
@@ -247,10 +282,7 @@ async function cutClip(
         inputName,
         "-t",
         String(duration),
-        "-c:v",
-        "libvpx-vp9",
-        "-b:v",
-        "2M",
+        ...reencodeVideo,
         "-c:a",
         "libopus",
         "-b:a",
@@ -268,11 +300,19 @@ async function concatSegments(
   segments: { start: number; end: number }[],
   inputName: string,
   onProgress?: ProgressCallback,
+  lightEncode = false,
 ): Promise<string> {
   if (segments.length === 1) {
     const s = segments[0];
     onProgress?.("Cutting segment…", 20);
-    await cutClip(ffmpeg, inputName, s.start, s.end - s.start, "merged.webm");
+    await cutClip(
+      ffmpeg,
+      inputName,
+      s.start,
+      s.end - s.start,
+      "merged.webm",
+      lightEncode,
+    );
     return "merged.webm";
   }
 
@@ -281,7 +321,7 @@ async function concatSegments(
     const s = segments[i];
     const name = `clip${i}.webm`;
     onProgress?.(`Extracting clip ${i + 1}/${segments.length}…`, 15 + i * 5);
-    await cutClip(ffmpeg, inputName, s.start, s.end - s.start, name);
+    await cutClip(ffmpeg, inputName, s.start, s.end - s.start, name, lightEncode);
     clipNames.push(name);
   }
 
@@ -306,6 +346,9 @@ async function concatSegments(
       "Merge clips",
     );
   } catch {
+    const mergeVideo = lightEncode
+      ? ["-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "1M"]
+      : ["-c:v", "libvpx-vp9", "-b:v", "2M"];
     await execChecked(
       ffmpeg,
       [
@@ -315,10 +358,7 @@ async function concatSegments(
         "0",
         "-i",
         "concat.txt",
-        "-c:v",
-        "libvpx-vp9",
-        "-b:v",
-        "2M",
+        ...mergeVideo,
         "-c:a",
         "libopus",
         "-b:a",
@@ -342,7 +382,7 @@ async function encodeMerged(
   totalDuration: number,
   attempt: number,
   onProgress?: ProgressCallback,
-  liteFilters = false,
+  filterTier: FilterTier = "lite",
 ): Promise<Uint8Array> {
   const outputName =
     config.exportMode === "audio" ? "final-audio.webm" : "final.webm";
@@ -387,9 +427,10 @@ async function encodeMerged(
       : undefined,
     watermarkInput: wm ? "1:v" : undefined,
     stickerInput: sticker ? (wm ? "2:v" : "1:v") : undefined,
-    lite: liteFilters,
+    tier: filterTier,
   });
   const scaleOnly = !videoFilter ? scaleFilterForPreset(config.preset) : null;
+  const vp8 = useVp8Encode(config);
 
   const args: string[] = ["-i", mergedName];
   if (wm) args.push("-i", "logo.png");
@@ -427,7 +468,7 @@ async function encodeMerged(
     args.push("-af", audioChain);
   }
 
-  args.push(...codecArgs(config.preset, attempt));
+  args.push(...codecArgs(config.preset, attempt, vp8));
   args.push("-c:a", "libopus", "-b:a", "128k", outputName);
 
   onProgress?.("Encoding export…", 60 + attempt * 8);
@@ -437,6 +478,58 @@ async function encodeMerged(
 
 function segmentDuration(segments: { start: number; end: number }[]): number {
   return segments.reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0);
+}
+
+async function tryEncodeWithTiers(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ffmpeg: any,
+  config: StudioExportConfig,
+  mergedName: string,
+  totalDuration: number,
+  onProgress?: ProgressCallback,
+): Promise<{ data: Uint8Array; tier: FilterTier }> {
+  const tiers: FilterTier[] = hasVideoEffects(config)
+    ? effectFilterTiers()
+    : ["standard"];
+
+  let lastErr: unknown;
+  for (let i = 0; i < tiers.length; i++) {
+    const tier = tiers[i];
+    if (i > 0) {
+      onProgress?.(`Retrying export (${tier} quality)…`, 55 + i * 5);
+    }
+    try {
+      const data = await encodeMerged(
+        ffmpeg,
+        config,
+        mergedName,
+        totalDuration,
+        0,
+        onProgress,
+        tier,
+      );
+      return { data, tier };
+    } catch (err) {
+      lastErr = err;
+      if (!isWasmMemoryError(err)) throw err;
+    }
+  }
+
+  const fallbackTier = tiers[tiers.length - 1] ?? "minimal";
+  try {
+    const data = await encodeMerged(
+      ffmpeg,
+      config,
+      mergedName,
+      totalDuration,
+      1,
+      onProgress,
+      fallbackTier,
+    );
+    return { data, tier: fallbackTier };
+  } catch (err) {
+    throw isWasmMemoryError(err) ? err : lastErr;
+  }
 }
 
 async function runFfmpegPipeline(
@@ -451,8 +544,18 @@ async function runFfmpegPipeline(
   const mime = isAudio ? "audio/webm" : "video/webm";
   const totalDuration = segmentDuration(segments) / config.speed;
 
+  const lightEncode = useVp8Encode(config);
+
   await ffmpeg.writeFile(inputName, await fetchFile(blob));
-  const mergedName = await concatSegments(ffmpeg, segments, inputName, onProgress);
+  const mergedName = await concatSegments(
+    ffmpeg,
+    segments,
+    inputName,
+    onProgress,
+    lightEncode,
+  );
+
+  await ffmpeg.deleteFile(inputName).catch(() => undefined);
 
   if (config.watermark) {
     await ffmpeg.writeFile("logo.png", config.watermark.pngBytes);
@@ -462,57 +565,30 @@ async function runFfmpegPipeline(
   }
 
   let data: Uint8Array;
-  let liteFilters = false;
+  let filterTier: FilterTier = hasVideoEffects(config) ? "lite" : "standard";
   try {
-    data = await encodeMerged(
+    const encoded = await tryEncodeWithTiers(
       ffmpeg,
       config,
       mergedName,
       totalDuration,
-      0,
       onProgress,
-      liteFilters,
     );
-  } catch (firstErr) {
-    if (isWasmMemoryError(firstErr) && hasVideoEffects(config)) {
-      onProgress?.("Retrying with lighter video filters…", 58);
-      liteFilters = true;
-      try {
-        data = await encodeMerged(
-          ffmpeg,
-          config,
-          mergedName,
-          totalDuration,
-          0,
-          onProgress,
-          true,
-        );
-      } catch {
-        data = await encodeMerged(
-          ffmpeg,
-          config,
-          mergedName,
-          totalDuration,
-          1,
-          onProgress,
-          true,
-        );
-      }
-    } else {
-      try {
-        data = await encodeMerged(
-          ffmpeg,
-          config,
-          mergedName,
-          totalDuration,
-          1,
-          onProgress,
-          liteFilters,
-        );
-      } catch (secondErr) {
-        throw isWasmMemoryError(secondErr) ? secondErr : firstErr;
-      }
+    data = encoded.data;
+    filterTier = encoded.tier;
+  } catch (ffmpegErr) {
+    await ffmpeg.deleteFile(mergedName).catch(() => undefined);
+    if (config.watermark) await ffmpeg.deleteFile("logo.png").catch(() => undefined);
+    if (config.sticker) await ffmpeg.deleteFile("sticker.png").catch(() => undefined);
+    if (hasVideoEffects(config) && config.exportMode !== "audio") {
+      onProgress?.("Switching to browser effects renderer…", 62);
+      resetFfmpegLoader();
+      const { exportStudioViaCanvas } = await import(
+        "@/utils/studioCanvasExport"
+      );
+      return exportStudioViaCanvas(blob, config, onProgress);
     }
+    throw ffmpegErr;
   }
 
   let result = toBlob(data, mime);
@@ -535,7 +611,7 @@ async function runFfmpegPipeline(
         totalDuration,
         attempt,
         onProgress,
-        liteFilters,
+        filterTier,
       );
       result = toBlob(data, mime);
       attempt += 1;
@@ -598,6 +674,20 @@ export async function renderStudioExport(
   try {
     return await runFfmpegPipeline(blob, config, onProgress);
   } catch (err) {
+    if (hasVideoEffects(config) && config.exportMode !== "audio") {
+      onProgress?.("Trying browser effects export…", 15);
+      try {
+        const { exportStudioViaCanvas } = await import(
+          "@/utils/studioCanvasExport"
+        );
+        return await exportStudioViaCanvas(blob, config, onProgress);
+      } catch (canvasErr) {
+        throw exportError(
+          canvasErr,
+          "Effects export failed. Try a shorter clip or fewer effects.",
+        );
+      }
+    }
     if (
       segments.length === 1 &&
       config.aspectMode === "landscape" &&

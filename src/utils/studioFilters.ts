@@ -5,28 +5,46 @@ export type AspectMode = "landscape" | "shorts";
 export type VideoRotation = 0 | 90 | 180 | 270;
 export type CropMode = "none" | "tight" | "square" | "cinema";
 
+/** Memory tier for ffmpeg.wasm — lower = less RAM, fewer filters. */
+export type FilterTier = "standard" | "lite" | "minimal";
+
 export type ImageOverlaySpec = {
   opacity: number;
   scale: number;
   position: WatermarkPosition;
 };
 
-/** Cap width before heavy filters — keeps ffmpeg.wasm inside WASM memory limits. */
-function wasmSafeDownscale(vin: string, vout: string): string {
-  return `[${vin}]scale='min(1920,iw)':-2:flags=bilinear[${vout}]`;
+function maxWidthForTier(tier: FilterTier): number {
+  switch (tier) {
+    case "minimal":
+      return 640;
+    case "lite":
+      return 854;
+    default:
+      return 1280;
+  }
 }
 
-/** 9:16 Shorts — low-res upscale bg (no gblur; split required when fan-out). */
-function shortsBase(vin: string, vout: string, lite: boolean): string {
-  if (lite) {
-    return `[${vin}]scale=1080:-2:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0a0a0f[${vout}]`;
+function shortsSize(tier: FilterTier): { w: number; h: number } {
+  switch (tier) {
+    case "minimal":
+      return { w: 540, h: 960 };
+    case "lite":
+      return { w: 720, h: 1280 };
+    default:
+      return { w: 720, h: 1280 };
   }
-  return [
-    `[${vin}]split=2[sb1][sb2]`,
-    `[sb1]scale=360:640:force_original_aspect_ratio=increase,crop=360:640,scale=1080:1920:flags=bilinear[bg]`,
-    `[sb2]scale=1080:-2:force_original_aspect_ratio=decrease[fg]`,
-    `[bg][fg]overlay=(W-w)/2:(H-h)/2[${vout}]`,
-  ].join(";");
+}
+
+function wasmSafeDownscale(vin: string, vout: string, tier: FilterTier): string {
+  const maxW = maxWidthForTier(tier);
+  return `[${vin}]scale='min(${maxW},iw)':-2:flags=bilinear[${vout}]`;
+}
+
+/** Single-chain 9:16 — no split, no blur (WASM-safe). */
+function shortsPad(vin: string, vout: string, tier: FilterTier): string {
+  const { w, h } = shortsSize(tier);
+  return `[${vin}]scale=${w}:-2:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x0a0a0f[${vout}]`;
 }
 
 function transformFilters(
@@ -73,13 +91,15 @@ export function buildStudioVideoFilter(opts: {
   sticker?: ImageOverlaySpec;
   watermarkInput?: string;
   stickerInput?: string;
-  /** Safer filter graph for ffmpeg.wasm (pad shorts, skip fades). */
-  lite?: boolean;
+  tier?: FilterTier;
 }): string | null {
-  const lite = !!opts.lite;
+  const tier = opts.tier ?? "lite";
   const parts: string[] = [];
   const tf = transformFilters(opts.rotation, opts.crop, opts.flipH);
-  const ff = lite ? [] : fadeFilters(opts.fadeIn, opts.fadeOut, opts.totalDuration);
+  const skipFade = tier === "minimal";
+  const ff = skipFade
+    ? []
+    : fadeFilters(opts.fadeIn, opts.fadeOut, opts.totalDuration);
 
   const needsGraph =
     tf.length > 0 ||
@@ -98,7 +118,7 @@ export function buildStudioVideoFilter(opts: {
   };
 
   const down = next();
-  parts.push(wasmSafeDownscale(current, down));
+  parts.push(wasmSafeDownscale(current, down, tier));
   current = down;
 
   if (tf.length > 0) {
@@ -109,7 +129,7 @@ export function buildStudioVideoFilter(opts: {
 
   if (opts.aspectMode === "shorts") {
     const out = next();
-    parts.push(shortsBase(current, out, lite));
+    parts.push(shortsPad(current, out, tier));
     current = out;
   }
 
@@ -155,4 +175,8 @@ export function getPreviewTransformStyle(
   return {
     transform: `rotate(${rotation}deg) scaleX(${flipH ? -1 : 1}) scale(${scale})`,
   };
+}
+
+export function effectFilterTiers(): FilterTier[] {
+  return ["lite", "minimal"];
 }
