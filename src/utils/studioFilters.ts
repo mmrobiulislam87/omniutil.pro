@@ -11,11 +11,21 @@ export type ImageOverlaySpec = {
   position: WatermarkPosition;
 };
 
-function shortsBase(vin: string, vout: string): string {
+/** Cap width before heavy filters — keeps ffmpeg.wasm inside WASM memory limits. */
+function wasmSafeDownscale(vin: string, vout: string): string {
+  return `[${vin}]scale='min(1920,iw)':-2:flags=bilinear[${vout}]`;
+}
+
+/** 9:16 Shorts — low-res upscale bg (no gblur; split required when fan-out). */
+function shortsBase(vin: string, vout: string, lite: boolean): string {
+  if (lite) {
+    return `[${vin}]scale=1080:-2:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x0a0a0f[${vout}]`;
+  }
   return [
-    `[${vin}]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=18[bg]`,
-    `[${vin}]scale=1080:-2:force_original_aspect_ratio=decrease[cropv]`,
-    `[bg][cropv]overlay=(W-w)/2:(H-h)/2[${vout}]`,
+    `[${vin}]split=2[sb1][sb2]`,
+    `[sb1]scale=360:640:force_original_aspect_ratio=increase,crop=360:640,scale=1080:1920:flags=bilinear[bg]`,
+    `[sb2]scale=1080:-2:force_original_aspect_ratio=decrease[fg]`,
+    `[bg][fg]overlay=(W-w)/2:(H-h)/2[${vout}]`,
   ].join(";");
 }
 
@@ -28,18 +38,25 @@ function transformFilters(
   if (rotation === 90) f.push("transpose=1");
   else if (rotation === 180) f.push("transpose=1,transpose=1");
   else if (rotation === 270) f.push("transpose=2");
-  if (crop === "tight") f.push("crop=iw*0.85:ih*0.85");
-  else if (crop === "square") f.push("crop='min(iw,ih)':'min(iw,ih)'");
-  else if (crop === "cinema") f.push("crop=iw:iw*9/16");
+  if (crop === "tight") {
+    f.push("crop=iw*0.85:ih*0.85:(iw-ow)/2:(ih-oh)/2");
+  } else if (crop === "square") {
+    f.push("crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'(ih-min(iw,ih))/2'");
+  } else if (crop === "cinema") {
+    f.push("crop=iw:iw*9/16:(iw-ow)/2:(ih-oh)/2");
+  }
   if (flipH) f.push("hflip");
   return f;
 }
 
 function fadeFilters(fadeIn: number, fadeOut: number, duration: number): string[] {
+  const safeDuration = Math.max(0.1, duration);
   const f: string[] = [];
-  if (fadeIn > 0) f.push(`fade=t=in:st=0:d=${fadeIn}`);
-  if (fadeOut > 0 && duration > fadeOut) {
-    f.push(`fade=t=out:st=${Math.max(0, duration - fadeOut)}:d=${fadeOut}`);
+  if (fadeIn > 0) f.push(`fade=t=in:st=0:d=${Math.min(fadeIn, safeDuration)}`);
+  if (fadeOut > 0 && safeDuration > fadeOut) {
+    f.push(
+      `fade=t=out:st=${Math.max(0, safeDuration - fadeOut)}:d=${fadeOut}`,
+    );
   }
   return f;
 }
@@ -56,10 +73,22 @@ export function buildStudioVideoFilter(opts: {
   sticker?: ImageOverlaySpec;
   watermarkInput?: string;
   stickerInput?: string;
+  /** Safer filter graph for ffmpeg.wasm (pad shorts, skip fades). */
+  lite?: boolean;
 }): string | null {
+  const lite = !!opts.lite;
   const parts: string[] = [];
   const tf = transformFilters(opts.rotation, opts.crop, opts.flipH);
-  const ff = fadeFilters(opts.fadeIn, opts.fadeOut, opts.totalDuration);
+  const ff = lite ? [] : fadeFilters(opts.fadeIn, opts.fadeOut, opts.totalDuration);
+
+  const needsGraph =
+    tf.length > 0 ||
+    opts.aspectMode === "shorts" ||
+    ff.length > 0 ||
+    !!opts.watermark ||
+    !!opts.sticker;
+
+  if (!needsGraph) return null;
 
   let current = "0:v";
   let stage = 0;
@@ -67,6 +96,10 @@ export function buildStudioVideoFilter(opts: {
     stage += 1;
     return `v${stage}`;
   };
+
+  const down = next();
+  parts.push(wasmSafeDownscale(current, down));
+  current = down;
 
   if (tf.length > 0) {
     const out = next();
@@ -76,7 +109,7 @@ export function buildStudioVideoFilter(opts: {
 
   if (opts.aspectMode === "shorts") {
     const out = next();
-    parts.push(shortsBase(current, out));
+    parts.push(shortsBase(current, out, lite));
     current = out;
   }
 
@@ -106,7 +139,7 @@ export function buildStudioVideoFilter(opts: {
     );
     current = out;
   } else {
-    parts.push(`[${current}]null[outv]`);
+    parts.push(`[${current}]format=yuv420p[outv]`);
   }
 
   return parts.length > 0 ? parts.join(";") : null;

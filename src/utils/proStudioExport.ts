@@ -53,6 +53,11 @@ function resetFfmpeg(): void {
 }
 
 function exportError(err: unknown, fallback: string): Error {
+  if (isWasmMemoryError(err)) {
+    return new Error(
+      "Video processing ran out of memory. Try a shorter clip, Balanced preset, or disable Shorts/blur effects.",
+    );
+  }
   if (err instanceof Error) {
     const detail = getLastFfmpegLog()
       ? ` ${getLastFfmpegLog().slice(-180)}`
@@ -106,15 +111,57 @@ function presetToQuality(preset: ExportPreset): ExportQuality {
 
 function codecArgs(preset: ExportPreset, attempt = 0): string[] {
   const crfBump = attempt * 5;
+  const wasmVp9 = [
+    "-deadline",
+    "realtime",
+    "-cpu-used",
+    "8",
+    "-threads",
+    "1",
+    "-row-mt",
+    "0",
+  ];
   switch (preset) {
     case "ultra_hd":
-      return ["-c:v", "libvpx-vp9", "-crf", String(22 + crfBump), "-b:v", "4M"];
+      return [
+        "-c:v",
+        "libvpx-vp9",
+        "-crf",
+        String(24 + crfBump),
+        "-b:v",
+        "3M",
+        ...wasmVp9,
+      ];
     case "discord":
-      return ["-c:v", "libvpx-vp9", "-crf", String(36 + crfBump), "-b:v", "700k"];
+      return [
+        "-c:v",
+        "libvpx-vp9",
+        "-crf",
+        String(36 + crfBump),
+        "-b:v",
+        "700k",
+        ...wasmVp9,
+      ];
     case "email":
-      return ["-c:v", "libvpx-vp9", "-crf", String(32 + crfBump), "-b:v", "1.2M"];
+      return [
+        "-c:v",
+        "libvpx-vp9",
+        "-crf",
+        String(32 + crfBump),
+        "-b:v",
+        "1.2M",
+        ...wasmVp9,
+      ];
     default:
-      return ["-c:v", "libvpx-vp9", "-crf", String(28 + crfBump), "-b:v", "2M"];
+      return [
+        "-c:v",
+        "libvpx-vp9",
+        "-crf",
+        String(28 + crfBump),
+        "-b:v",
+        "2M",
+        ...wasmVp9,
+      ];
   }
 }
 
@@ -156,6 +203,13 @@ function hasVideoEffects(config: StudioExportConfig): boolean {
     !!config.flipH ||
     (config.fadeIn ?? 0) > 0 ||
     (config.fadeOut ?? 0) > 0
+  );
+}
+
+function isWasmMemoryError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /memory access out of bounds|out of memory|allocation failed|RuntimeError/i.test(
+    msg,
   );
 }
 
@@ -288,6 +342,7 @@ async function encodeMerged(
   totalDuration: number,
   attempt: number,
   onProgress?: ProgressCallback,
+  liteFilters = false,
 ): Promise<Uint8Array> {
   const outputName =
     config.exportMode === "audio" ? "final-audio.webm" : "final.webm";
@@ -332,6 +387,7 @@ async function encodeMerged(
       : undefined,
     watermarkInput: wm ? "1:v" : undefined,
     stickerInput: sticker ? (wm ? "2:v" : "1:v") : undefined,
+    lite: liteFilters,
   });
   const scaleOnly = !videoFilter ? scaleFilterForPreset(config.preset) : null;
 
@@ -406,6 +462,7 @@ async function runFfmpegPipeline(
   }
 
   let data: Uint8Array;
+  let liteFilters = false;
   try {
     data = await encodeMerged(
       ffmpeg,
@@ -414,16 +471,48 @@ async function runFfmpegPipeline(
       totalDuration,
       0,
       onProgress,
+      liteFilters,
     );
-  } catch {
-    data = await encodeMerged(
-      ffmpeg,
-      config,
-      mergedName,
-      totalDuration,
-      1,
-      onProgress,
-    );
+  } catch (firstErr) {
+    if (isWasmMemoryError(firstErr) && hasVideoEffects(config)) {
+      onProgress?.("Retrying with lighter video filters…", 58);
+      liteFilters = true;
+      try {
+        data = await encodeMerged(
+          ffmpeg,
+          config,
+          mergedName,
+          totalDuration,
+          0,
+          onProgress,
+          true,
+        );
+      } catch {
+        data = await encodeMerged(
+          ffmpeg,
+          config,
+          mergedName,
+          totalDuration,
+          1,
+          onProgress,
+          true,
+        );
+      }
+    } else {
+      try {
+        data = await encodeMerged(
+          ffmpeg,
+          config,
+          mergedName,
+          totalDuration,
+          1,
+          onProgress,
+          liteFilters,
+        );
+      } catch (secondErr) {
+        throw isWasmMemoryError(secondErr) ? secondErr : firstErr;
+      }
+    }
   }
 
   let result = toBlob(data, mime);
@@ -446,6 +535,7 @@ async function runFfmpegPipeline(
         totalDuration,
         attempt,
         onProgress,
+        liteFilters,
       );
       result = toBlob(data, mime);
       attempt += 1;
